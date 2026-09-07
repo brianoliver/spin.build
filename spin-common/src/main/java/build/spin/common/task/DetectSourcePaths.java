@@ -149,7 +149,7 @@ public interface DetectSourcePaths
                         .filter(p -> p.getFileName().toString().endsWith(".java"))
                         .forEach(builder::add);
                 } catch (final IOException e) {
-                    // TODO: log the exception
+                    throw new RuntimeException("Failed to walk source root [" + path + "] for .java files", e);
                 }
             });
 
