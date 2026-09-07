@@ -707,6 +707,58 @@ class AbstractDetectResolutionTest {
     }
 
     @Test
+    void correctPinnedVersions_sameStaleModuleReachedViaTwoChains_correctsBothNotJustTheFirst() throws IOException {
+        final Path repo = projectRoot.resolve("repo");
+        // grpc-core is pinned to 1.10.0 — a *downgrade* from the 1.60.0 sitting on disk, reached via
+        // two independent transitive chains (so it appears twice in the candidate list).
+        final Path grpcStale = createArtifactJar(repo, "io/grpc", "grpc-core", "1.60.0", "io.grpc");
+        final Path grpcPinned = createArtifactJar(repo, "io/grpc", "grpc-core", "1.10.0", "io.grpc");
+
+        final ModuleVersioning versioning = moduleName ->
+            "io.grpc".equals(moduleName) ? Optional.of(Version.parse("1.10.0")) : Optional.empty();
+
+        final ModuleCatalog catalog = ModuleCatalog.HeapBased.create()
+            .add("io.grpc", Artifact.create("io.grpc", "grpc-core", "1.10.0", "jar"));
+
+        final Artifact.Resolver resolver = stubResolver(artifact -> "1.10.0".equals(artifact.version().get())
+            ? Exceptional.of(List.of(grpcPinned))
+            : Exceptional.ofException(new IllegalStateException("unexpected artifact " + artifact)));
+
+        final List<Path> corrected = AbstractDetectResolution.correctPinnedVersions(
+            List.of(grpcStale, grpcStale), versioning, catalog, resolver, recorder());
+
+        // the second occurrence must not pass through at its stale 1.60.0 — otherwise
+        // dedupeByMavenCoordinate would keep it (higher version) and the downgrade pin would be lost.
+        assertThat(corrected).containsExactly(grpcPinned);
+    }
+
+    @Test
+    void correctPinnedVersions_staleModuleReachedTwiceAndReResolutionFails_keepsExactlyOneOnDiskCopy()
+        throws IOException {
+
+        final Path repo = projectRoot.resolve("repo");
+        // grpc-core is pinned to 1.60.0 but on disk at 1.10.0, reached via two chains (listed twice);
+        // re-resolving at the pin fails, so the fallback is to keep the on-disk jar.
+        final Path grpcOnDisk = createArtifactJar(repo, "io/grpc", "grpc-core", "1.10.0", "io.grpc");
+
+        final ModuleVersioning versioning = moduleName ->
+            "io.grpc".equals(moduleName) ? Optional.of(Version.parse("1.60.0")) : Optional.empty();
+
+        final ModuleCatalog catalog = ModuleCatalog.HeapBased.create()
+            .add("io.grpc", Artifact.create("io.grpc", "grpc-core", "1.60.0", "jar"));
+
+        final Artifact.Resolver resolver = stubResolver(
+            _ -> Exceptional.ofException(new IllegalStateException("resolution failure")));
+
+        final List<Path> corrected = AbstractDetectResolution.correctPinnedVersions(
+            List.of(grpcOnDisk, grpcOnDisk), versioning, catalog, resolver, recorder());
+
+        // the first occurrence keeps the on-disk jar as a fallback; the duplicate is dropped by the
+        // seen-module guard — so exactly one copy survives, not zero and not two.
+        assertThat(corrected).containsExactly(grpcOnDisk);
+    }
+
+    @Test
     void correctPinnedVersions_onDiskVersionAlreadyMatchesPin_returnsUnchanged() throws IOException {
         final Path repo = projectRoot.resolve("repo");
         final Path jar = createArtifactJar(repo, "io/grpc", "grpc-core", "1.60.0", "io.grpc");
