@@ -9,8 +9,8 @@ A modular Java build system that infers what to do by inspecting project structu
 
 `spin` discovers pluggable Extensions via `ServiceLoader`, each of which auto-detects what it applies
 to and declares task dependencies via annotations. It then executes a dependency-ordered graph of
-tasks to compile, test, package, and deploy modular Java applications. See [overview.md](overview.md)
-for a deeper look at the design.
+tasks to compile, test, package, and deploy modular Java applications. See
+[docs/CONCEPTS.md](docs/CONCEPTS.md) for a deeper look at the design and its vocabulary.
 
 ## Modules
 
