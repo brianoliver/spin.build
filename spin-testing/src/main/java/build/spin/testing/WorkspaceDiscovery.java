@@ -32,6 +32,7 @@ import build.spin.SpinURI;
 import build.spin.Workspace;
 import build.spin.common.telemetry.TelemetryPublisher;
 import build.spin.engine.DefaultEngine;
+import build.spin.option.BuildDirectoryName;
 import org.junit.jupiter.api.extension.AfterEachCallback;
 import org.junit.jupiter.api.extension.BeforeAllCallback;
 import org.junit.jupiter.api.extension.BeforeEachCallback;
@@ -40,6 +41,7 @@ import org.junit.jupiter.api.extension.ParameterContext;
 import org.junit.jupiter.api.extension.ParameterResolutionException;
 import org.junit.jupiter.api.extension.ParameterResolver;
 
+import java.io.IOException;
 import java.lang.reflect.Method;
 import java.net.URL;
 import java.nio.file.FileSystem;
@@ -47,6 +49,7 @@ import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Comparator;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -153,6 +156,13 @@ public class WorkspaceDiscovery
             .orElseThrow(
                 () -> new RuntimeException("Failed to determine the workspace for " + context.getDisplayName()));
 
+        // remove any build output left behind by a previous run of this (or another) test against the
+        // same on-disk workspace BEFORE discovery -- stale build directories feed back into project
+        // detection and dependency resolution, not just into the program under test
+        removePreviousBuildOutput(workspacePath, engine.options()
+            .getOptionalValue(BuildDirectoryName.class)
+            .orElseGet(() -> BuildDirectoryName.automatic().get()));
+
         // establish the Workspace at the WorkspacePath
         final Workspace workspace = engine.createWorkspace(workspacePath)
             .orElseThrow(() -> new RuntimeException("Failed to establish the workspace at " + workspacePath))
@@ -160,8 +170,52 @@ public class WorkspaceDiscovery
 
         // store the Workspace for the WorkspacePath
         this.workspaces.put(workspacePath, workspace);
+    }
 
-        // TODO: remove the previous build output for the Workspace
+    /**
+     * Deletes every build output directory (one named {@code buildDirectoryName}) at or beneath
+     * {@code workspacePath}, so a test never observes output left behind by a previous run. A
+     * multi-module workspace has one such directory per project, not just one at the root, hence the
+     * walk.
+     *
+     * @param workspacePath      the root at or beneath which to search
+     * @param buildDirectoryName the name of spin's build output directory
+     */
+    private void removePreviousBuildOutput(final Path workspacePath, final String buildDirectoryName) {
+
+        if (!Files.isDirectory(workspacePath)) {
+            return;
+        }
+
+        try (var tree = Files.walk(workspacePath)) {
+            tree.filter(candidate -> buildDirectoryName.equals(String.valueOf(candidate.getFileName())))
+                .filter(Files::isDirectory)
+                .toList()  // collect before deleting, so the walk isn't mutated mid-traversal
+                .forEach(this::deleteRecursively);
+        }
+        catch (final IOException e) {
+            throw new RuntimeException("Failed to scan for previous build output under " + workspacePath, e);
+        }
+    }
+
+    /**
+     * Recursively deletes {@code root} and everything beneath it (deepest entries first, since a
+     * directory can only be removed once empty).
+     *
+     * @param root the directory to delete
+     */
+    private void deleteRecursively(final Path root) {
+
+        this.recorder.info("Removing previous build output: %s", root);
+
+        try (var tree = Files.walk(root)) {
+            for (final Path path : tree.sorted(Comparator.reverseOrder()).toList()) {
+                Files.delete(path);
+            }
+        }
+        catch (final IOException e) {
+            throw new RuntimeException("Failed to remove previous build output at " + root, e);
+        }
     }
 
     @Override
