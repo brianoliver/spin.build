@@ -70,6 +70,13 @@
             <version>${revision}</version>
         </dependency>
 
+        <!-- imported directly by Spin.java (JarPlugin, for alias derivation) -->
+        <dependency>
+            <groupId>build.spin.module</groupId>
+            <artifactId>spin-jar-module</artifactId>
+            <version>${revision}</version>
+        </dependency>
+
         <dependency>
             <groupId>build.spin.module</groupId>
             <artifactId>spin-java-module</artifactId>
@@ -163,6 +170,9 @@
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-gpg-module</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-java-module</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-junit-module</ignoredUnusedDeclaredDependency>
+                        <!-- ServiceLoader-discovered; Spin.java imports build.spin.module.jar.JarPlugin (from
+                             spin-jar-module, a transitive dep of spin-maven-module) for alias derivation, but
+                             nothing in spin imports spin-maven-module's own classes directly -->
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-maven-module</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-module-system-module</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-reporting-module</ignoredUnusedDeclaredDependency>
