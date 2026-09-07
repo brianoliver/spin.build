@@ -556,10 +556,12 @@ public abstract class AbstractDetectResolution
      * <p>Correction runs to a fixed point: paths pulled in by re-resolving a mismatched candidate are
      * themselves checked against their own pin (e.g. re-resolving a mismatched Helidon-transitive
      * {@code grpc-core} may pull in an old {@code protobuf-java} that is itself pinned elsewhere in the
-     * workspace). Each module name is re-resolved at most once per call — repeat occurrences of the
-     * same module (very likely, since deduping by coordinate happens in a later step) reuse that
-     * single correction rather than issuing a redundant resolver call, and this also bounds the
-     * fixed-point iteration against cycles in the transitive graph.
+     * workspace). Each mismatched module name is corrected at most once per call — once a module has
+     * been re-resolved (or kept on-disk as a fallback), later mismatched occurrences of it are dropped
+     * rather than passed through at their stale on-disk version, since that stale candidate would
+     * otherwise beat the correction in the later coordinate-dedupe step whenever the pin is a
+     * downgrade. This also issues no redundant resolver call and bounds the fixed-point iteration
+     * against cycles in the transitive graph.
      *
      * @param paths the resolved external candidate {@link Path}s
      * @param versioning the project-wide {@link ModuleVersioning}
@@ -608,9 +610,13 @@ public abstract class AbstractDetectResolution
             }
 
             if (!resolvedModuleNames.add(moduleName.get())) {
-                // already re-resolved this module during this call — accept as-is rather than issuing
-                // a duplicate resolver call or looping forever on a transitive-graph cycle
-                corrected.add(path);
+                // This module was already reached (via another transitive chain) and handled: its
+                // correction — the re-resolved pinned paths on success, or the stale path kept as a
+                // fallback on failure — is already in `corrected`. Drop this duplicate stale
+                // occurrence rather than re-adding it at its on-disk version, which would otherwise
+                // feed a stale candidate into dedupeByMavenCoordinate and win whenever the pin is a
+                // downgrade. This also issues no duplicate resolver call and cannot loop on a
+                // transitive-graph cycle.
                 continue;
             }
 
