@@ -239,6 +239,29 @@ class AbstractJavaDependencyAnalysisTest {
     }
 
     @Test
+    void shouldProcess_mavenQualifierOrdering_higherRankQualifierTriggersReprocessing() {
+        // 2.0.0-beta processed first; 2.0.0-rc arrives. The prerelease qualifier decides: under
+        // Version#compareTo's case-sensitive lexicographic order "rc" (r=0x72) sorts above "beta"
+        // here, but flip the case to "RC" (R=0x52) and it sorts below — the ordering is unstable.
+        // VersionOrder.MAVEN's qualifier chain ranks rc above beta unconditionally, so 2.0.0-rc is
+        // strictly higher and the higher-version graph is walked.
+        final Map<String, Optional<Version>> seen = new LinkedHashMap<>();
+        seen.put("com.example.lib", Optional.of(Version.parse("2.0.0-beta")));
+        assertThat(AbstractJavaDependencyAnalysis.shouldProcess(
+            "com.example.lib", Optional.of(Version.parse("2.0.0-RC")), seen)).isTrue();
+    }
+
+    @Test
+    void shouldProcess_mavenQualifierOrdering_lowerRankQualifierDoesNotReprocess() {
+        // Reverse of the above: 2.0.0-RC processed first, stale 2.0.0-beta arrives and must not
+        // clobber it. Version#compareTo would (wrongly) treat "beta" as higher than "RC" here.
+        final Map<String, Optional<Version>> seen = new LinkedHashMap<>();
+        seen.put("com.example.lib", Optional.of(Version.parse("2.0.0-RC")));
+        assertThat(AbstractJavaDependencyAnalysis.shouldProcess(
+            "com.example.lib", Optional.of(Version.parse("2.0.0-beta")), seen)).isFalse();
+    }
+
+    @Test
     void shouldProcess_seenWithoutVersion_versionedReferenceArrives_returnsTrue() {
         // A module-info.java requires clause carries no version; when the resolved
         // ArtifactDescriptor later provides a version we must re-walk.

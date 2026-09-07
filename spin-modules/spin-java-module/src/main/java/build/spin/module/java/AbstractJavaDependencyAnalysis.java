@@ -29,6 +29,7 @@ import build.base.option.JDKVersion;
 import build.base.table.Table;
 import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
+import build.base.version.VersionOrder;
 import build.codemodel.foundation.descriptor.RequiresModuleDescriptor;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.codemodel.jdk.descriptor.RequiresModifier;
@@ -665,6 +666,9 @@ public abstract class AbstractJavaDependencyAnalysis
      * <p>A module is processed if it has never been seen before, or if the incoming version is
      * strictly higher than the version that was previously processed — this ensures the higher-version
      * jar's transitive dependencies are walked rather than silently inheriting the lower-version walk.
+     * Versions are compared with {@link VersionOrder#MAVEN}, not {@link Version#compareTo}, so that
+     * Maven qualifiers (e.g. {@code rc}, {@code snapshot}) rank the way Maven itself ranks them rather
+     * than lexicographically — matching every other version-comparison call site.
      *
      * @param name    the JPMS module name
      * @param version the version of the candidate, if known
@@ -681,7 +685,7 @@ public abstract class AbstractJavaDependencyAnalysis
         if (seenVersion.isEmpty()) {
             return version.isPresent();
         }
-        return version.isPresent() && version.get().compareTo(seenVersion.get()) > 0;
+        return version.isPresent() && VersionOrder.MAVEN.compare(version.get(), seenVersion.get()) > 0;
     }
 
     /**
