@@ -370,8 +370,7 @@ public class MavenPlugin
                     try {
                         archiveBuilder.content().add(path);
                     } catch (final IOException e) {
-                        // TODO:
-                        e.printStackTrace();
+                        throw new RuntimeException("Failed to add source path [" + path + "] to the sources archive", e);
                     }
                 });
 
@@ -453,8 +452,7 @@ public class MavenPlugin
                     try {
                         archiveBuilder.content().add(path.toFile());
                     } catch (final IOException e) {
-                        // TODO
-                        e.printStackTrace();
+                        throw new RuntimeException("Failed to add Javadoc path [" + path + "] to the Javadoc archive", e);
                     }
                 });
 
