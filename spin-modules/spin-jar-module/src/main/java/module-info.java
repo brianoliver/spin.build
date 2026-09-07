@@ -1,6 +1,6 @@
 /*-
  * #%L
- * Spin Maven Module
+ * Spin Jar Module
  * %%
  * Copyright (C) 2026 Workday, Inc.
  * %%
@@ -18,33 +18,28 @@
  * #L%
  */
 
-module build.spin.module.maven {
+module build.spin.module.jar {
     requires build.spin.common;
     requires transitive build.spin.module.java;
     requires transitive build.spin.module.modulesystem;
 
-    requires java.net.http;
-    requires java.xml;
-    requires build.base.configuration;
-    requires build.base.expression;
+    requires build.base.archiving;
     requires build.base.foundation;
     requires build.base.io;
     requires build.base.option;
-    requires build.base.telemetry;
+    requires build.base.version;
     requires build.codemodel.dependency.injection;
     requires build.codemodel.jdk;
     requires build.spin;
-    requires build.spin.module.configuration;
+    requires build.spin.module.clean;
     requires build.spin.module.gpg;
-    requires build.spin.module.jar;
     requires jakarta.inject;
 
-    opens build.spin.module.maven to build.codemodel.dependency.injection;
+    opens build.spin.module.jar to build.codemodel.dependency.injection;
 
-    exports build.spin.module.maven;
+    exports build.spin.module.jar;
 
     provides build.spin.Extension.MetaClass with
-        build.spin.module.maven.MavenPlugin.MetaClass,
-        build.spin.module.maven.MavenRepository.MetaClass;
+        build.spin.module.jar.JarPlugin.MetaClass;
 
 }

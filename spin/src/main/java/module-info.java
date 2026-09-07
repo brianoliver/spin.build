@@ -27,6 +27,7 @@ module build.spin.application {
     requires transitive build.spin.module.configuration;
     requires transitive build.spin.module.git;
     requires transitive build.spin.module.gpg;
+    requires transitive build.spin.module.jar;
     requires transitive build.spin.module.java;
     requires transitive build.spin.module.junit;
     requires transitive build.spin.module.maven;

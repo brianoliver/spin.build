@@ -55,6 +55,7 @@
         <module>spin-configuration-module</module>
         <module>spin-git-module</module>
         <module>spin-gpg-module</module>
+        <module>spin-jar-module</module>
         <module>spin-java-module</module>
         <module>spin-engine-tests</module>
         <module>spin-java-module-tests</module>

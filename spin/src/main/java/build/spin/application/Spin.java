@@ -44,9 +44,9 @@ import build.spin.common.DefaultAssetCache;
 import build.spin.engine.DefaultEngine;
 import build.spin.module.checkstyle.CheckstylePlugin;
 import build.spin.module.clean.CleanPlugin;
+import build.spin.module.jar.JarPlugin;
 import build.spin.module.java.Java25CompilerPlugin;
 import build.spin.module.junit.Java25JUnitPlugin;
-import build.spin.module.maven.MavenPlugin;
 import build.spin.option.EngineVersion;
 import build.spin.option.ExecutionSlots;
 import build.spin.option.JlinkTargets;
@@ -147,7 +147,7 @@ public class Spin {
                 Java25CompilerPlugin.class,
                 Java25JUnitPlugin.class,
                 CheckstylePlugin.class,
-                MavenPlugin.class
+                JarPlugin.class
             ),
             registeredTaskNames);
 

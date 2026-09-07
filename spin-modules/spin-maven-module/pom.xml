@@ -30,12 +30,6 @@
 
         <dependency>
             <groupId>build.spin.module</groupId>
-            <artifactId>spin-clean-module</artifactId>
-            <version>${revision}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>build.spin.module</groupId>
             <artifactId>spin-configuration-module</artifactId>
             <version>${revision}</version>
         </dependency>
@@ -43,6 +37,12 @@
         <dependency>
             <groupId>build.spin.module</groupId>
             <artifactId>spin-gpg-module</artifactId>
+            <version>${revision}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>build.spin.module</groupId>
+            <artifactId>spin-jar-module</artifactId>
             <version>${revision}</version>
         </dependency>
 
@@ -56,11 +56,6 @@
             <groupId>build.spin.module</groupId>
             <artifactId>spin-module-system-module</artifactId>
             <version>${revision}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>build.base</groupId>
-            <artifactId>base-archiving</artifactId>
         </dependency>
 
         <dependency>
