@@ -19,7 +19,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -157,6 +159,39 @@ public class MavenRepositoryTests {
             this.repository.getModuleDescriptor(artifact, this.moduleCatalog, this.versioning);
 
         assertThat(moduleDescriptor.isPresent()).isTrue();
+    }
+
+    @Test
+    void shouldResolveTransitiveDependenciesForJacksonDatabind() {
+
+        final Artifact artifact = Artifact.parse("com.fasterxml.jackson.core:jackson-databind:2.12.2");
+
+        final List<Path> paths = this.repository.resolveTransitive(artifact)
+            .orElseThrow(() -> new AssertionError(
+                "Expected a transitive path list for [" + artifact + "] but none was resolved"));
+
+        assertThat(paths).extracting(path -> path.getFileName().toString())
+            .contains("jackson-databind-2.12.2.jar", "jackson-core-2.12.2.jar", "jackson-annotations-2.12.2.jar");
+    }
+
+    @Test
+    void shouldApplyEdgeExclusionsWhenResolvingTransitiveDependencies() {
+
+        // jackson-databind depends directly on jackson-core and jackson-annotations. The Set overload
+        // seeds the PomResolver BFS with a "groupId:artifactId" exclusion already applied to the root
+        // artifact's own closure -- the <exclusions> a consuming pom declared on this dependency edge,
+        // which the bare Artifact no longer carries -- so jackson-annotations must be dropped while
+        // the unexcluded jackson-core survives.
+        final Artifact artifact = Artifact.parse("com.fasterxml.jackson.core:jackson-databind:2.12.2");
+
+        final List<Path> paths = this.repository
+            .resolveTransitive(artifact, Set.of("com.fasterxml.jackson.core:jackson-annotations"))
+            .orElseThrow(() -> new AssertionError(
+                "Expected a transitive path list for [" + artifact + "] but none was resolved"));
+
+        assertThat(paths).extracting(path -> path.getFileName().toString())
+            .contains("jackson-databind-2.12.2.jar", "jackson-core-2.12.2.jar")
+            .doesNotContain("jackson-annotations-2.12.2.jar");
     }
 
     @Test

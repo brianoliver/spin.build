@@ -45,6 +45,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -115,6 +116,11 @@ public class MavenRepository
     @Override
     public Exceptional<List<Path>> resolveTransitive(final Artifact artifact) {
         return this.maven.resolveTransitiveDependencies(artifact);
+    }
+
+    @Override
+    public Exceptional<List<Path>> resolveTransitive(final Artifact artifact, final Set<String> exclusions) {
+        return this.maven.resolveTransitiveDependencies(artifact, exclusions);
     }
 
     @Override

@@ -35,15 +35,16 @@ import java.nio.file.Path;
  * {@code <localRepository>} from {@code settings.xml} is left to a future cross-module
  * consolidation with {@code spin-maven-module}'s settings reader.)
  * <p>
- * Injected as a {@link Singleton} so the {@code PomBased*} resources share one definition rather
- * than each re-deriving the path inline from {@link System#getProperty}. Tests point it at a
- * temporary directory via {@link #of(Path)}.
+ * Injected as a {@link Singleton} so the {@code PomBased*} resources — and
+ * {@code spin-java-module}'s {@code AbstractDetectResolution}, which reads project {@code pom.xml}
+ * {@code <exclusions>} — share one definition rather than each re-deriving the path inline from
+ * {@link System#getProperty}. Tests point it at a temporary directory via {@link #of(Path)}.
  *
  * @author reed.vonredwitz
  * @since Sep-2026
  */
 @Singleton
-final class LocalMavenRepository {
+public final class LocalMavenRepository {
 
     private static final String REPO_LOCAL_PROPERTY = "maven.repo.local";
 
@@ -65,7 +66,7 @@ final class LocalMavenRepository {
      * @param path the local repository root
      * @return the {@link LocalMavenRepository}
      */
-    static LocalMavenRepository of(final Path path) {
+    public static LocalMavenRepository of(final Path path) {
         return new LocalMavenRepository(path);
     }
 
@@ -75,7 +76,7 @@ final class LocalMavenRepository {
      *
      * @return the {@link LocalMavenRepository}
      */
-    static LocalMavenRepository fromEnvironment() {
+    public static LocalMavenRepository fromEnvironment() {
         return new LocalMavenRepository(resolveFromEnvironment());
     }
 
@@ -84,7 +85,7 @@ final class LocalMavenRepository {
      *
      * @return the path
      */
-    Path path() {
+    public Path path() {
         return this.path;
     }
 

@@ -31,6 +31,7 @@ import build.spin.option.NetworkAccess;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
 
 import static build.spin.option.NetworkAccess.OFFLINE;
 
@@ -114,8 +115,22 @@ class MavenFacade {
      * @return an {@link Exceptional} list of local {@link Path}s
      */
     public Exceptional<List<Path>> resolveTransitiveDependencies(final Artifact artifact) {
+        return resolveTransitiveDependencies(artifact, Set.of());
+    }
+
+    /**
+     * Resolves all transitive compile/runtime dependencies, returning their local paths, with a set
+     * of {@code "groupId:artifactId"} exclusion patterns applied to the root artifact's own closure
+     * (the {@code <exclusions>} a consuming pom declared on this dependency edge).
+     *
+     * @param artifact the root artifact
+     * @param exclusions the {@code "groupId:artifactId"} exclusion patterns
+     * @return an {@link Exceptional} list of local {@link Path}s
+     */
+    public Exceptional<List<Path>> resolveTransitiveDependencies(final Artifact artifact,
+                                                                 final Set<String> exclusions) {
         try {
-            final List<Path> paths = this.resolver.resolveTransitive(gavOf(artifact), artifact.type());
+            final List<Path> paths = this.resolver.resolveTransitive(gavOf(artifact), artifact.type(), exclusions);
             return Exceptional.of(paths);
         } catch (final RuntimeException e) {
             this.recorder.error(e, "Unexpected error resolving transitive dependencies for %s", artifact);
