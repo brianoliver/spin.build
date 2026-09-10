@@ -65,12 +65,15 @@ public class PomBasedModuleVersioning
     @Inject
     private CodeModel codeModel;
 
+    @Inject
+    private LocalMavenRepository localMavenRepository;
+
     private ModuleVersioning versioning;
 
     @PostInject
     private void onInjected() {
-        final Path localRepo = Path.of(System.getProperty("user.home"), ".m2", "repository");
-        this.versioning = buildFromWorkspace(this.project.path(), localRepo, this.codeModel, this.recorder);
+        this.versioning = buildFromWorkspace(
+            this.project.path(), this.localMavenRepository.path(), this.codeModel, this.recorder);
     }
 
     /**
@@ -78,7 +81,7 @@ public class PomBasedModuleVersioning
      * testing without the DI container.
      */
     static ModuleVersioning buildFromWorkspace(final Path workspacePath, final TelemetryRecorder recorder) {
-        final Path localRepo = Path.of(System.getProperty("user.home"), ".m2", "repository");
+        final Path localRepo = LocalMavenRepository.fromEnvironment().path();
         return buildFromWorkspace(workspacePath, localRepo, new JDKCodeModel(new NonCachingNameProvider()), recorder);
     }
 

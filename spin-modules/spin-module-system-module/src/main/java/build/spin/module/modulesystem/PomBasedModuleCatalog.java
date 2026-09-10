@@ -62,12 +62,15 @@ public class PomBasedModuleCatalog
     @Inject
     private CodeModel codeModel;
 
+    @Inject
+    private LocalMavenRepository localMavenRepository;
+
     private ModuleCatalog catalog;
     private Path localRepo;
 
     @PostInject
     private void onInjected() {
-        this.localRepo = Path.of(System.getProperty("user.home"), ".m2", "repository");
+        this.localRepo = this.localMavenRepository.path();
         this.catalog = buildFromWorkspace(this.project.path(), this.localRepo, this.codeModel, this.recorder);
     }
 
@@ -76,7 +79,7 @@ public class PomBasedModuleCatalog
      * testing without the DI container.
      */
     static ModuleCatalog buildFromWorkspace(final Path workspacePath, final TelemetryRecorder recorder) {
-        final Path localRepo = Path.of(System.getProperty("user.home"), ".m2", "repository");
+        final Path localRepo = LocalMavenRepository.fromEnvironment().path();
         return buildFromWorkspace(workspacePath, localRepo, new JDKCodeModel(new NonCachingNameProvider()), recorder);
     }
 
