@@ -29,7 +29,6 @@ import build.spin.module.modulesystem.pom.Plugin;
 import build.spin.module.modulesystem.pom.PomReader;
 import jakarta.inject.Inject;
 
-import java.nio.file.Path;
 import java.util.Optional;
 
 /**
@@ -49,12 +48,14 @@ public abstract class AbstractPomBasedResource
     @Inject
     private TelemetryRecorder recorder;
 
+    @Inject
+    private LocalMavenRepository localMavenRepository;
+
     private PomReader pomReader;
 
     @PostInject
     private void onInjected() {
-        final Path localRepository = Path.of(System.getProperty("user.home"), ".m2", "repository");
-        this.pomReader = new PomReader(localRepository, this.recorder);
+        this.pomReader = new PomReader(this.localMavenRepository.path(), this.recorder);
     }
 
     /**

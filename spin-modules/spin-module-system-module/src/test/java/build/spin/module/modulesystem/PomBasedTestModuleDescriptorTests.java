@@ -54,6 +54,14 @@ class PomBasedTestModuleDescriptorTests {
     private static final CodeModel CODE_MODEL = new JDKCodeModel(new NonCachingNameProvider());
 
     /**
+     * These tests derive {@code requires} purely from the pom's {@code <dependency>} coordinates via
+     * naming conventions, so the local repository is never actually read — an empty temp directory
+     * stands in for it.
+     */
+    @TempDir
+    private Path localRepo;
+
+    /**
      * A {@code <dependencyManagement>}-only entry is a version pin, not an actual dependency of the
      * project — it must not contribute a test {@code requires}.
      */
@@ -204,7 +212,7 @@ class PomBasedTestModuleDescriptorTests {
         assertThat(requiredModuleNames(workspace)).contains("build.base.transport.json");
     }
 
-    private static List<String> requiredModuleNames(final Path workspace) throws Exception {
+    private List<String> requiredModuleNames(final Path workspace) throws Exception {
         final Project project = mock(Project.class);
         when(project.path()).thenReturn(workspace);
         when(project.name()).thenReturn("root");
@@ -212,6 +220,7 @@ class PomBasedTestModuleDescriptorTests {
         final PomBasedTestModuleDescriptor descriptor = new PomBasedTestModuleDescriptor();
         inject(descriptor, "recorder", RECORDER);
         inject(descriptor, "codeModel", CODE_MODEL);
+        inject(descriptor, "localMavenRepository", LocalMavenRepository.of(this.localRepo));
 
         final JDKModuleDescriptor result = descriptor.get(project);
         return result.requiresClauses()

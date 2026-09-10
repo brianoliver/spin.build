@@ -65,6 +65,9 @@ public class PomBasedTestModuleDescriptor
     @Inject
     private CodeModel codeModel;
 
+    @Inject
+    private LocalMavenRepository localMavenRepository;
+
     @Override
     public JDKModuleDescriptor get(final Project project) {
         final String name = project.name().replace("-", ".");
@@ -79,8 +82,7 @@ public class PomBasedTestModuleDescriptor
         try {
             final Path projectPom = project.path().resolve(POM_FILENAME);
             if (Files.exists(projectPom)) {
-                final Path localRepo = Path.of(System.getProperty("user.home"), ".m2", "repository");
-                final PomReader pomReader = new PomReader(localRepo, this.recorder);
+                final PomReader pomReader = new PomReader(this.localMavenRepository.path(), this.recorder);
                 registerTestRequires(pomReader, projectPom, descriptor);
             }
 
