@@ -34,6 +34,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -440,6 +441,26 @@ public interface Artifact {
          *         artifact (root + all transitive compile-scope dependencies)
          */
         Exceptional<List<Path>> resolveTransitive(Artifact artifact);
+
+        /**
+         * As {@link #resolveTransitive(Artifact)}, but with a set of {@code "groupId:artifactId"}
+         * exclusion patterns (either side may be the Maven wildcard {@code *}) applied to the root
+         * artifact's own transitive closure — the {@code <exclusions>} a consuming pom declared on
+         * this dependency edge, which the bare {@link Artifact} does not carry. Inherited down the
+         * whole subtree, exactly as Maven's own {@code <exclusions>} semantics require.
+         * <p>
+         * The default ignores {@code exclusions} and falls back to {@link #resolveTransitive(Artifact)};
+         * {@link build.spin.module.modulesystem.Artifact.Resolver} implementations backed by a real
+         * pom walk override it.
+         *
+         * @param artifact the root {@link Artifact}
+         * @param exclusions the {@code "groupId:artifactId"} exclusion patterns
+         *
+         * @return an {@link Exceptional} {@link List} of {@link Path}s
+         */
+        default Exceptional<List<Path>> resolveTransitive(final Artifact artifact, final Set<String> exclusions) {
+            return resolveTransitive(artifact);
+        }
     }
 
     /**

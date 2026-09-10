@@ -21,6 +21,7 @@ package build.spin.module.maven;
  */
 
 import build.spin.common.telemetry.TelemetryPublisher;
+import build.spin.module.modulesystem.pom.Gav;
 import org.junit.jupiter.api.Test;
 
 import java.io.BufferedReader;
@@ -40,6 +41,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -114,6 +116,37 @@ public class PomResolverTests {
             .extracting(Path::getFileName)
             .extracting(Object::toString)
             .containsExactlyInAnyOrder("root-1.0.jar", "a-1.0.jar", "b-1.0.jar", "conflict-2.0.jar");
+    }
+
+    /**
+     * The 3-arg {@link PomResolver#resolveTransitive(Gav, String, Set)} overload seeds the
+     * BFS with a set of exclusions already applied to the <em>root</em> — the {@code <exclusions>} a
+     * consuming pom declared on this dependency edge, which are lost once the edge is reduced to a
+     * bare coordinate for {@code AbstractDetectResolution}'s per-{@code requires} resolution. Using
+     * the {@code exclusions-repo} fixture, where {@code a} → {@code conflict:1.0}: resolving
+     * {@code a} alone pulls in {@code conflict:1.0}, but seeding {@code test:conflict} as a root
+     * exclusion must drop it.
+     */
+    @Test
+    void shouldApplyRootExclusionsPassedToThreeArgOverload() throws URISyntaxException {
+        final Path localRepository = fixtureRepository("exclusions-repo");
+        final PomResolver resolver = new PomResolver(
+            new TelemetryPublisher(URI.create("maven://root-exclusions-test"), System.out::println),
+            localRepository,
+            true,
+            List.of());
+
+        final Gav a = new Gav("test", "a", "1.0");
+
+        assertThat(resolver.resolveTransitive(a, "jar", Set.of()))
+            .extracting(Path::getFileName)
+            .extracting(Object::toString)
+            .containsExactlyInAnyOrder("a-1.0.jar", "conflict-1.0.jar");
+
+        assertThat(resolver.resolveTransitive(a, "jar", Set.of("test:conflict")))
+            .extracting(Path::getFileName)
+            .extracting(Object::toString)
+            .containsExactly("a-1.0.jar");
     }
 
     /**

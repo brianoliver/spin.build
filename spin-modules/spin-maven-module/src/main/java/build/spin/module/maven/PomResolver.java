@@ -290,6 +290,19 @@ class PomResolver {
      *                      by a {@code <dependency>} entry
      */
     List<Path> resolveTransitive(final Gav gav, final String rootExtension) {
+        return resolveTransitive(gav, rootExtension, Set.of());
+    }
+
+    /**
+     * As {@link #resolveTransitive(Gav, String)}, but seeds the BFS with a set of
+     * {@code "groupId:artifactId"} exclusion patterns (either side may be {@code *}) already applied
+     * to the root — the {@code <exclusions>} a consuming pom declared on this dependency edge, which
+     * are otherwise unknown once the edge has been reduced to a bare coordinate. They inherit down
+     * the whole subtree rooted here, exactly like an {@code <exclusion>} declared inside the walk.
+     *
+     * @param rootExclusions the {@code "groupId:artifactId"} exclusion patterns to apply to the root
+     */
+    List<Path> resolveTransitive(final Gav gav, final String rootExtension, final Set<String> rootExclusions) {
         // Phase 1: BFS the dependency graph and record the winning version for each groupId:artifactId.
         // Processing is level-by-level, so the first occurrence of a GA to be dequeued is guaranteed to be
         // its shallowest; deeper occurrences of an already-won GA are skipped and their own subtrees are
@@ -297,7 +310,7 @@ class PomResolver {
         final Map<GA, String> winningVersion = new LinkedHashMap<>();
         final Set<GA> visited = new HashSet<>();
         final ArrayDeque<TransitiveNode> queue = new ArrayDeque<>();
-        queue.add(new TransitiveNode(gav, 0, Set.of()));
+        queue.add(new TransitiveNode(gav, 0, Set.copyOf(rootExclusions)));
 
         while (!queue.isEmpty()) {
             final TransitiveNode node = queue.poll();

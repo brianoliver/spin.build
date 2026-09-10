@@ -882,4 +882,94 @@ class AbstractDetectResolutionTest {
                 && t.toString().contains("2.19.0")
                 && t.toString().contains("5.23.0"));
     }
+
+    // writes the given pom.xml body as the project's own pom -- the "repository" path handed to
+    // projectDependencyExclusions points nowhere because the fixtures below are self-contained
+    // (no parent, no dependencyManagement), so no local repository lookup is needed.
+    private void writeProjectPom(final String xml) throws IOException {
+        Files.writeString(projectRoot.resolve("pom.xml"), xml);
+    }
+
+    private Path noRepository() {
+        return projectRoot.resolve("no-such-repository");
+    }
+
+    @Test
+    void projectDependencyExclusions_noPom_returnsEmpty() {
+        assertThat(AbstractDetectResolution.projectDependencyExclusions(
+            projectRoot, noRepository(), recorder())).isEmpty();
+    }
+
+    @Test
+    void projectDependencyExclusions_onlyDependenciesDeclaringExclusionsAreKeptKeyedByGroupAndArtifact()
+        throws IOException {
+        writeProjectPom("""
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>com.example</groupId>
+              <artifactId>consumer</artifactId>
+              <version>1.0</version>
+              <dependencies>
+                <dependency>
+                  <groupId>org.example</groupId>
+                  <artifactId>lib</artifactId>
+                  <version>2.0</version>
+                  <exclusions>
+                    <exclusion>
+                      <groupId>commons-logging</groupId>
+                      <artifactId>commons-logging</artifactId>
+                    </exclusion>
+                    <exclusion>
+                      <groupId>org.unwanted</groupId>
+                      <artifactId>*</artifactId>
+                    </exclusion>
+                  </exclusions>
+                </dependency>
+                <dependency>
+                  <groupId>org.example</groupId>
+                  <artifactId>plain</artifactId>
+                  <version>1.0</version>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        assertThat(AbstractDetectResolution.projectDependencyExclusions(projectRoot, noRepository(), recorder()))
+            .containsOnlyKeys("org.example:lib")
+            .hasEntrySatisfying("org.example:lib", exclusions -> assertThat(exclusions)
+                .containsExactlyInAnyOrder("commons-logging:commons-logging", "org.unwanted:*"));
+    }
+
+    @Test
+    void projectDependencyExclusions_noDependencyDeclaresExclusions_returnsEmpty() throws IOException {
+        writeProjectPom("""
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>com.example</groupId>
+              <artifactId>consumer</artifactId>
+              <version>1.0</version>
+              <dependencies>
+                <dependency>
+                  <groupId>org.example</groupId>
+                  <artifactId>plain</artifactId>
+                  <version>1.0</version>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        assertThat(AbstractDetectResolution.projectDependencyExclusions(
+            projectRoot, noRepository(), recorder())).isEmpty();
+    }
+
+    @Test
+    void projectDependencyExclusions_unparseablePom_returnsEmpty() throws IOException {
+        // PomReader#read returns Optional.empty() for a pom it can't parse (logging its own
+        // warning), so exclusion detection degrades to "no exclusions" rather than failing the
+        // whole resolution.
+        writeProjectPom("<project><this is not well-formed xml");
+
+        assertThat(AbstractDetectResolution.projectDependencyExclusions(
+            projectRoot, noRepository(), recorder())).isEmpty();
+    }
 }
