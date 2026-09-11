@@ -11,6 +11,14 @@
 # Examples:
 #   ./test-fixtures.sh                     # run all fixtures
 #   ./test-fixtures.sh feature-preview     # run one fixture by name
+#
+# Post-build verification:
+#   A fixture may drop an executable `verify.sh` at its root. When present, it runs after
+#   each successful build (Maven, then spin) with cwd set to the fixture dir and BUILD_TOOL
+#   set to "mvn" or "spin", and must exit non-zero to fail. Use it for anything the build's
+#   own exit code can't confirm — e.g. that a provided-scope dependency's classes are absent
+#   from the packaged jar. A failure after the Maven phase counts as FIXTURE-BROKEN (the
+#   fixture's own assumption is wrong); a failure after the spin phase counts as SPIN-FAIL.
 set -uo pipefail
 
 trap 'echo; echo "Interrupted."; kill 0; exit 130' INT
@@ -37,11 +45,24 @@ elapsed_s() {
     awk "BEGIN{printf \"%.3f\", ($end - $start) / 1000000000}"
 }
 
+run_verify() {
+    local dir="$1"
+    local tool="$2"
+    local verify_log="$3"
+
+    local verify_script="$dir/verify.sh"
+    if [ ! -x "$verify_script" ]; then
+        return 0
+    fi
+    (cd "$dir" && BUILD_TOOL="$tool" ./verify.sh) >"$verify_log" 2>&1
+}
+
 run_fixture() {
     local name="$1"
     local dir="$2"
     local mvn_log="$LOG_DIR/${name}.mvn.log"
     local spin_log="$LOG_DIR/${name}.spin.log"
+    local verify_log="$LOG_DIR/${name}.verify.log"
     local t0 t1
 
     echo -n "  $name ... "
@@ -66,6 +87,18 @@ run_fixture() {
         return
     fi
 
+    if ! run_verify "$dir" mvn "$verify_log"; then
+        echo "FIXTURE-BROKEN"
+        echo "    verify log (mvn): $verify_log"
+        tail -10 "$verify_log" >&2
+        NAMES+=("$name")
+        RESULTS+=("FIXTURE-BROKEN")
+        MVN_TIMES+=("$mvn_time")
+        SPIN_TIMES+=("-")
+        (( fixture_broken++ )) || true
+        return
+    fi
+
     # spin check
     t0=$(date +%s%N)
     spin -w "$dir" clean build >"$spin_log" 2>&1
@@ -78,6 +111,18 @@ run_fixture() {
         echo "SPIN-FAIL"
         echo "    spin log: $spin_log"
         tail -10 "$spin_log" >&2
+        NAMES+=("$name")
+        RESULTS+=("SPIN-FAIL")
+        MVN_TIMES+=("$mvn_time")
+        SPIN_TIMES+=("$spin_time")
+        (( spin_fail++ )) || true
+        return
+    fi
+
+    if ! run_verify "$dir" spin "$verify_log"; then
+        echo "SPIN-FAIL"
+        echo "    verify log (spin): $verify_log"
+        tail -10 "$verify_log" >&2
         NAMES+=("$name")
         RESULTS+=("SPIN-FAIL")
         MVN_TIMES+=("$mvn_time")

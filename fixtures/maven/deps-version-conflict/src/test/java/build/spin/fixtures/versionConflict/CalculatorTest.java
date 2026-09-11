@@ -13,9 +13,13 @@ class CalculatorTest {
     }
 
     @Test
-    void guavaIsOnClasspath() {
-        // Confirms whichever guava version was resolved is usable
-        ImmutableList<Integer> list = ImmutableList.of(1, 2, 3);
-        assertTrue(list.contains(2));
+    void nearestWinsGuavaVersionIsResolved() {
+        // Maven's nearest-wins mediation resolves this pom's two direct guava declarations
+        // to 33.2.1-jre (confirmed via `mvn dependency:tree`); a build tool that mediates
+        // differently (e.g. highest-wins) would silently put a different jar on the classpath.
+        final String jarLocation =
+            ImmutableList.class.getProtectionDomain().getCodeSource().getLocation().toString();
+        assertTrue(jarLocation.contains("guava-33.2.1-jre.jar"),
+            "expected guava-33.2.1-jre.jar on the classpath, was: " + jarLocation);
     }
 }
