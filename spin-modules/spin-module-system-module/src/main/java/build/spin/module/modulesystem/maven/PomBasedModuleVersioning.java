@@ -1,4 +1,4 @@
-package build.spin.module.modulesystem;
+package build.spin.module.modulesystem.maven;
 
 /*-
  * #%L
@@ -29,10 +29,10 @@ import build.codemodel.foundation.naming.NonCachingNameProvider;
 import build.codemodel.jdk.JDKCodeModel;
 import build.spin.Project;
 import build.spin.Resource;
-import build.spin.Workspace;
+import build.spin.module.modulesystem.ModuleVersioning;
+import build.spin.module.modulesystem.properties.PropertiesModuleVersioning;
 import jakarta.inject.Inject;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -54,8 +54,7 @@ import java.util.function.Predicate;
 public class PomBasedModuleVersioning
     implements ModuleVersioning, Resource {
 
-    private static final String POM_FILENAME = "pom.xml";
-    private static final String VERSION_PROPERTIES_FILENAME = "version.properties";
+    private static final String VERSION_PROPERTIES_FILENAME = PropertiesModuleVersioning.VERSION_PROPERTIES_FILENAME;
 
     @Inject
     private TelemetryRecorder recorder;
@@ -146,15 +145,12 @@ public class PomBasedModuleVersioning
 
         @Override
         public boolean isWorkspace(final Path path) {
-            return PomWorkspaces.isMavenWorkspaceRoot(path)
-                && !Files.exists(path.resolve(VERSION_PROPERTIES_FILENAME));
+            return PomWorkspaces.isMavenWorkspaceRootWithoutConfig(path, VERSION_PROPERTIES_FILENAME);
         }
 
         @Override
         public boolean isDetectedIn(final Project project) {
-            return project instanceof Workspace
-                && Files.exists(project.path().resolve(POM_FILENAME))
-                && !Files.exists(project.path().resolve(VERSION_PROPERTIES_FILENAME));
+            return PomWorkspaces.isMavenWorkspaceProjectWithoutConfig(project, VERSION_PROPERTIES_FILENAME);
         }
     }
 

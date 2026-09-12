@@ -1,4 +1,4 @@
-package build.spin.module.modulesystem;
+package build.spin.module.modulesystem.properties;
 
 /*-
  * #%L
@@ -24,6 +24,9 @@ import build.base.telemetry.TelemetryRecorder;
 import build.codemodel.dependency.injection.PostInject;
 import build.spin.Project;
 import build.spin.Resource;
+import build.spin.module.modulesystem.Artifact;
+import build.spin.module.modulesystem.ModuleCatalog;
+import build.spin.module.modulesystem.ModuleReference;
 import jakarta.inject.Inject;
 
 import java.io.BufferedReader;
@@ -40,7 +43,7 @@ import java.util.stream.Stream;
  * @author brian.oliver
  * @since Nov-2019
  */
-public class ProjectModuleCatalog
+public class PropertiesModuleCatalog
     implements ModuleCatalog, Resource {
 
     public static final String MODULE_CATALOG_FILENAME = "module-catalog.properties";
@@ -113,7 +116,7 @@ public class ProjectModuleCatalog
     }
 
     /**
-     * The {@link Resource.MetaClass} for {@link ProjectModuleCatalog}.
+     * The {@link Resource.MetaClass} for {@link PropertiesModuleCatalog}.
      */
     public static class MetaClass
         implements Resource.MetaClass {

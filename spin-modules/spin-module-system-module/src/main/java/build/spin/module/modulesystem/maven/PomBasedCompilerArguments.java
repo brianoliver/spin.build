@@ -1,4 +1,4 @@
-package build.spin.module.modulesystem;
+package build.spin.module.modulesystem.maven;
 
 /*-
  * #%L
@@ -22,6 +22,7 @@ package build.spin.module.modulesystem;
 
 import build.spin.Project;
 import build.spin.Resource;
+import build.spin.module.modulesystem.CompilerArguments;
 import build.spin.module.modulesystem.pom.ConfigNode;
 import build.spin.module.modulesystem.pom.GA;
 

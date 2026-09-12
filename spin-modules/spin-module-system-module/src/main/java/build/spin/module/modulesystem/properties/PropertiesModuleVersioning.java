@@ -1,4 +1,4 @@
-package build.spin.module.modulesystem;
+package build.spin.module.modulesystem.properties;
 
 /*-
  * #%L
@@ -27,6 +27,7 @@ import build.codemodel.dependency.injection.PostInject;
 import build.spin.Project;
 import build.spin.Resource;
 import build.spin.common.util.Globs;
+import build.spin.module.modulesystem.ModuleVersioning;
 import jakarta.inject.Inject;
 
 import java.io.BufferedReader;
@@ -46,13 +47,13 @@ import java.util.regex.PatternSyntaxException;
  * @author brian.oliver
  * @since May-2020
  */
-public class ProjectModuleVersioning
+public class PropertiesModuleVersioning
     implements ModuleVersioning, Resource {
 
     /**
-     * The name of the file defining {@link ProjectModuleVersioning} information.
+     * The name of the file defining {@link PropertiesModuleVersioning} information.
      */
-    private final static String VERSION_PROPERTIES_FILENAME = "version.properties";
+    public static final String VERSION_PROPERTIES_FILENAME = "version.properties";
 
     /**
      * The {@link TelemetryRecorder} for the {@link Resource}.
@@ -70,20 +71,20 @@ public class ProjectModuleVersioning
     private final LinkedHashMap<Pattern, Version> versions;
 
     /**
-     * Constructs the {@link ProjectModuleVersioning}.
+     * Constructs the {@link PropertiesModuleVersioning}.
      *
      * @param project  the {@link Project}
      * @param recorder the {@link TelemetryRecorder}
      */
     @Inject
-    private ProjectModuleVersioning(final Project project, final TelemetryRecorder recorder) {
+    private PropertiesModuleVersioning(final Project project, final TelemetryRecorder recorder) {
         this.project = project;
         this.recorder = recorder;
         this.versions = new LinkedHashMap<>();
     }
 
     /**
-     * Once the {@link ProjectModuleVersioning} is created, initialize (and cache) the available {@link Version}s.
+     * Once the {@link PropertiesModuleVersioning} is created, initialize (and cache) the available {@link Version}s.
      */
     @PostInject
     private void onInjected() {
@@ -134,7 +135,7 @@ public class ProjectModuleVersioning
 
         // attempt to determine a version defined by a parent project
         return this.project.parent()
-            .map(parent -> parent.getResource(ProjectModuleVersioning.class))
+            .map(parent -> parent.getResource(PropertiesModuleVersioning.class))
             .filter(Optional::isPresent)
             .map(Optional::get)
             .map(versioning -> versioning.getVersion(moduleName))
@@ -143,7 +144,7 @@ public class ProjectModuleVersioning
     }
 
     /**
-     * The {@link Resource.MetaClass} for {@link ProjectModuleVersioning}.
+     * The {@link Resource.MetaClass} for {@link PropertiesModuleVersioning}.
      */
     public static class MetaClass
         implements Resource.MetaClass {
