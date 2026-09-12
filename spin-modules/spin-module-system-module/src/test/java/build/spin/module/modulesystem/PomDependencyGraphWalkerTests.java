@@ -1232,6 +1232,66 @@ class PomDependencyGraphWalkerTests {
     }
 
     // -------------------------------------------------------------------------
+    // isIgnored-pruned directories (e.g. .spinignore'd worktrees)
+    // -------------------------------------------------------------------------
+
+    @Test
+    void walk_prunesDirectoryForWhichIsIgnoredReturnsTrue(@TempDir final Path workspace) throws Exception {
+        writePom(workspace.resolve("pom.xml"), """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>root</artifactId>
+              <version>1.0.0</version>
+            </project>
+            """);
+
+        final Path worktrees = Files.createDirectory(workspace.resolve(".worktrees"));
+        final Path stale = Files.createDirectory(worktrees.resolve("stale-branch"));
+        writePom(stale.resolve("pom.xml"), """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>root</artifactId>
+              <version>0.1.0-stale</version>
+            </project>
+            """);
+
+        final CollectingVisitor visitor = new CollectingVisitor();
+        PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL,
+            path -> path.equals(worktrees), visitor);
+
+        // only the workspace root pom is visited; the stale pom under the pruned .worktrees
+        // directory must never be reached
+        assertThat(visitor.visits).hasSize(1);
+        assertThat(visitor.forCoordinate("com.example", "root").version).isEqualTo("1.0.0");
+    }
+
+    @Test
+    void walk_withoutIsIgnoredArgumentWalksEverything(@TempDir final Path workspace) throws Exception {
+        writePom(workspace.resolve("pom.xml"), """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>root</artifactId>
+              <version>1.0.0</version>
+              <packaging>pom</packaging>
+            </project>
+            """);
+
+        final Path submodule = Files.createDirectory(workspace.resolve("sub"));
+        writePom(submodule.resolve("pom.xml"), """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>sub</artifactId>
+              <version>1.0.0</version>
+            </project>
+            """);
+
+        final CollectingVisitor visitor = new CollectingVisitor();
+        PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
+
+        assertThat(visitor.forCoordinate("com.example", "sub").version).isEqualTo("1.0.0");
+    }
+
+    // -------------------------------------------------------------------------
     // helpers
     // -------------------------------------------------------------------------
 

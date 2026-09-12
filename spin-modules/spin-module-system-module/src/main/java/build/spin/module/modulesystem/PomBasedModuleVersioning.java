@@ -37,6 +37,7 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Predicate;
 
 /**
  * A {@link ModuleVersioning} {@link Resource} that derives dependency versions by parsing the
@@ -73,7 +74,8 @@ public class PomBasedModuleVersioning
     @PostInject
     private void onInjected() {
         this.versioning = buildFromWorkspace(
-            this.project.path(), this.localMavenRepository.path(), this.codeModel, this.recorder);
+            this.project.path(), this.localMavenRepository.path(), this.codeModel, this.recorder,
+            this.project::isIgnored);
     }
 
     /**
@@ -93,9 +95,22 @@ public class PomBasedModuleVersioning
                                                final Path localRepo,
                                                final CodeModel codeModel,
                                                final TelemetryRecorder recorder) {
+        return buildFromWorkspace(workspacePath, localRepo, codeModel, recorder, path -> false);
+    }
+
+    /**
+     * Builds a {@link ModuleVersioning} from a Maven workspace, pruning any directory for which
+     * {@code isIgnored} returns {@code true} (e.g. one excluded via {@code .spinignore}) from the
+     * pom walk. Package-private to allow direct testing.
+     */
+    static ModuleVersioning buildFromWorkspace(final Path workspacePath,
+                                               final Path localRepo,
+                                               final CodeModel codeModel,
+                                               final TelemetryRecorder recorder,
+                                               final Predicate<Path> isIgnored) {
         final Map<String, Version> versions = new LinkedHashMap<>();
 
-        PomDependencyGraphWalker.walk(workspacePath, localRepo, recorder, codeModel,
+        PomDependencyGraphWalker.walk(workspacePath, localRepo, recorder, codeModel, isIgnored,
             (names, groupId, artifactId, rawVersion) -> {
                 try {
                     final Version version = Version.parse(rawVersion);
