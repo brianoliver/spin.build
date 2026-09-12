@@ -20,7 +20,6 @@ package build.spin.module.configuration;
  * #L%
  */
 
-import build.base.foundation.Strings;
 import build.base.io.PathSet;
 import build.base.io.PathSetBuilder;
 import build.base.telemetry.TelemetryRecorder;
@@ -32,13 +31,11 @@ import build.codemodel.jdk.descriptor.JDKType;
 import build.spin.Project;
 import build.spin.Resource;
 import build.spin.Workspace;
-import build.spin.common.util.Globs;
 import jakarta.inject.Inject;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.LinkedList;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Predicate;
@@ -71,9 +68,10 @@ public class ConfigurationResource
     private final ConfigurationResolver resolver;
 
     /**
-     * The glob-based {@link Predicate}s created from the optionally defined .gitignore file
+     * The {@link Predicate}, compiled from the optionally defined {@link #SPIN_IGNORE_FILENAME},
+     * that is {@code true} for every {@link Path} the {@link Project} should ignore.
      */
-    private final LinkedList<Predicate<Path>> predicates;
+    private final Predicate<Path> ignored;
 
     /**
      * Constructs a {@link ConfigurationResource}.
@@ -108,38 +106,27 @@ public class ConfigurationResource
         );
 
         // -------------------
-        // establish the Predicates to hold the rules to ignore files in Spin
-        this.predicates = new LinkedList<>();
+        // establish the Predicate to hold the rules to ignore files in Spin
 
         // attempt to load the .spinignore rules from the FileSystem
         final Path path = this.project.path().resolve(SPIN_IGNORE_FILENAME);
 
+        Predicate<Path> compiled = candidate -> false;
         if (Files.exists(path)) {
             try (Stream<String> stream = Files.lines(path)) {
-                stream
-                    .map(String::trim)
-                    .filter(line -> !Strings.isEmpty(line))
-                    .filter(line -> !line.startsWith("#"))
-                    .map(line -> {
-                        final boolean negate = line.startsWith("!");
-                        final String glob = negate ? line.substring(1) : line;
-                        final Predicate<Path> predicate =
-                            p -> Globs.toPattern(glob).asMatchPredicate().test(p.toString());
-
-                        return negate ? predicate.negate() : predicate;
-                    })
-                    .forEach(this.predicates::add);
+                compiled = SpinIgnorePatterns.compile(this.project.path(), stream);
             } catch (final IOException e) {
                 recorder.warn(e,
                     "Failed to read %s.  Project paths be included or excluded when they shouldn't be!",
                     SPIN_IGNORE_FILENAME);
             }
         }
+        this.ignored = compiled;
     }
 
     @Override
     public boolean isIgnored(final Path path) {
-        return this.predicates.stream().anyMatch(predicate -> predicate.test(path));
+        return this.ignored.test(path);
     }
 
     static Class<?> definingClass(final Dependency dependency) {
