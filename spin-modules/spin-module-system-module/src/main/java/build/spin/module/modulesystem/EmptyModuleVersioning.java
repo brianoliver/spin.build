@@ -23,9 +23,9 @@ package build.spin.module.modulesystem;
 import build.base.version.Version;
 import build.spin.Project;
 import build.spin.Resource;
-import build.spin.Workspace;
+import build.spin.module.modulesystem.maven.PomWorkspaces;
+import build.spin.module.modulesystem.properties.PropertiesModuleVersioning;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
 
@@ -36,7 +36,7 @@ import java.util.Optional;
  * @author reed.vonredwitz
  * @since Apr-2026
  */
-public class DefaultModuleVersioning
+public class EmptyModuleVersioning
     implements ModuleVersioning, Resource {
 
     @Override
@@ -45,12 +45,10 @@ public class DefaultModuleVersioning
     }
 
     /**
-     * The {@link Resource.MetaClass} for {@link DefaultModuleVersioning}.
+     * The {@link Resource.MetaClass} for {@link EmptyModuleVersioning}.
      */
     public static class MetaClass
         implements Resource.MetaClass {
-
-        private static final String VERSION_PROPERTIES_FILENAME = "version.properties";
 
         @Override
         public boolean isWorkspace(final Path path) {
@@ -59,9 +57,7 @@ public class DefaultModuleVersioning
 
         @Override
         public boolean isDetectedIn(final Project project) {
-            return project instanceof Workspace
-                && !Files.exists(project.path().resolve(VERSION_PROPERTIES_FILENAME))
-                && !Files.exists(project.path().resolve("pom.xml"));
+            return PomWorkspaces.isConfigless(project, PropertiesModuleVersioning.VERSION_PROPERTIES_FILENAME);
         }
     }
 }

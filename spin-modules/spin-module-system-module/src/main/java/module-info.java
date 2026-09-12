@@ -32,21 +32,25 @@ module build.spin.module.modulesystem {
     requires jakarta.inject;
 
     opens build.spin.module.modulesystem to build.codemodel.dependency.injection;
+    opens build.spin.module.modulesystem.maven to build.codemodel.dependency.injection;
+    opens build.spin.module.modulesystem.properties to build.codemodel.dependency.injection;
 
     exports build.spin.module.modulesystem;
     exports build.spin.module.modulesystem.pom;
+    exports build.spin.module.modulesystem.maven;
+    exports build.spin.module.modulesystem.properties;
 
     provides build.spin.Extension.MetaClass with
-        build.spin.module.modulesystem.DefaultModuleCatalog.MetaClass,
-        build.spin.module.modulesystem.DefaultModuleVersioning.MetaClass,
-        build.spin.module.modulesystem.PomBasedModuleCatalog.MetaClass,
-        build.spin.module.modulesystem.PomBasedCheckstyleArguments.MetaClass,
-        build.spin.module.modulesystem.PomBasedCompilerArguments.MetaClass,
-        build.spin.module.modulesystem.PomBasedJavadocArguments.MetaClass,
-        build.spin.module.modulesystem.PomBasedModuleVersioning.MetaClass,
-        build.spin.module.modulesystem.PomBasedTestArguments.MetaClass,
-        build.spin.module.modulesystem.PomBasedTestModuleDescriptor.MetaClass,
-        build.spin.module.modulesystem.ProjectModuleCatalog.MetaClass,
-        build.spin.module.modulesystem.ProjectModuleVersioning.MetaClass;
+        build.spin.module.modulesystem.EmptyModuleCatalog.MetaClass,
+        build.spin.module.modulesystem.EmptyModuleVersioning.MetaClass,
+        build.spin.module.modulesystem.maven.PomBasedModuleCatalog.MetaClass,
+        build.spin.module.modulesystem.maven.PomBasedCheckstyleArguments.MetaClass,
+        build.spin.module.modulesystem.maven.PomBasedCompilerArguments.MetaClass,
+        build.spin.module.modulesystem.maven.PomBasedJavadocArguments.MetaClass,
+        build.spin.module.modulesystem.maven.PomBasedModuleVersioning.MetaClass,
+        build.spin.module.modulesystem.maven.PomBasedTestArguments.MetaClass,
+        build.spin.module.modulesystem.maven.PomBasedTestModuleDescriptor.MetaClass,
+        build.spin.module.modulesystem.properties.PropertiesModuleCatalog.MetaClass,
+        build.spin.module.modulesystem.properties.PropertiesModuleVersioning.MetaClass;
 
 }

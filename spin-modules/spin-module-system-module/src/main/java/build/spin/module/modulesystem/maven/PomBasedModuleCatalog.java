@@ -1,4 +1,4 @@
-package build.spin.module.modulesystem;
+package build.spin.module.modulesystem.maven;
 
 /*-
  * #%L
@@ -27,10 +27,12 @@ import build.codemodel.foundation.naming.NonCachingNameProvider;
 import build.codemodel.jdk.JDKCodeModel;
 import build.spin.Project;
 import build.spin.Resource;
-import build.spin.Workspace;
+import build.spin.module.modulesystem.Artifact;
+import build.spin.module.modulesystem.ModuleCatalog;
+import build.spin.module.modulesystem.ModuleReference;
+import build.spin.module.modulesystem.properties.PropertiesModuleCatalog;
 import jakarta.inject.Inject;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
 import java.util.function.Predicate;
@@ -51,8 +53,7 @@ import java.util.stream.Stream;
 public class PomBasedModuleCatalog
     implements ModuleCatalog, Resource {
 
-    private static final String POM_FILENAME = "pom.xml";
-    private static final String MODULE_CATALOG_FILENAME = ProjectModuleCatalog.MODULE_CATALOG_FILENAME;
+    private static final String MODULE_CATALOG_FILENAME = PropertiesModuleCatalog.MODULE_CATALOG_FILENAME;
 
     @Inject
     private TelemetryRecorder recorder;
@@ -164,15 +165,12 @@ public class PomBasedModuleCatalog
 
         @Override
         public boolean isWorkspace(final Path path) {
-            return PomWorkspaces.isMavenWorkspaceRoot(path)
-                && !Files.exists(path.resolve(MODULE_CATALOG_FILENAME));
+            return PomWorkspaces.isMavenWorkspaceRootWithoutConfig(path, MODULE_CATALOG_FILENAME);
         }
 
         @Override
         public boolean isDetectedIn(final Project project) {
-            return project instanceof Workspace
-                && Files.exists(project.path().resolve(POM_FILENAME))
-                && !Files.exists(project.path().resolve(MODULE_CATALOG_FILENAME));
+            return PomWorkspaces.isMavenWorkspaceProjectWithoutConfig(project, MODULE_CATALOG_FILENAME);
         }
     }
 }

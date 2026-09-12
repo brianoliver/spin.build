@@ -1,4 +1,4 @@
-package build.spin.module.modulesystem;
+package build.spin.module.modulesystem.maven;
 
 /*-
  * #%L
@@ -29,7 +29,7 @@ import build.codemodel.jdk.descriptor.ModuleModifier;
 import build.codemodel.jdk.descriptor.OpenModule;
 import build.spin.Project;
 import build.spin.Resource;
-import build.spin.Workspace;
+import build.spin.module.modulesystem.TestModuleDescriptor;
 import build.spin.module.modulesystem.pom.Dependency;
 import build.spin.module.modulesystem.pom.Pom;
 import build.spin.module.modulesystem.pom.PomReader;
@@ -136,8 +136,7 @@ public class PomBasedTestModuleDescriptor
 
         @Override
         public boolean isDetectedIn(final Project project) {
-            return project instanceof Workspace
-                && Files.exists(project.path().resolve(POM_FILENAME));
+            return PomWorkspaces.isMavenWorkspaceProject(project);
         }
     }
 }

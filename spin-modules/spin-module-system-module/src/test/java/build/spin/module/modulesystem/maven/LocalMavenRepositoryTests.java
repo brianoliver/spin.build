@@ -1,4 +1,4 @@
-package build.spin.module.modulesystem;
+package build.spin.module.modulesystem.maven;
 
 /*-
  * #%L

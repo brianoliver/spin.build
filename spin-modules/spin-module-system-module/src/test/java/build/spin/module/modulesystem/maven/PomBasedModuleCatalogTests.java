@@ -1,4 +1,4 @@
-package build.spin.module.modulesystem;
+package build.spin.module.modulesystem.maven;
 
 /*-
  * #%L
@@ -22,6 +22,8 @@ package build.spin.module.modulesystem;
 
 import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
+import build.spin.module.modulesystem.Artifact;
+import build.spin.module.modulesystem.ModuleCatalog;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 

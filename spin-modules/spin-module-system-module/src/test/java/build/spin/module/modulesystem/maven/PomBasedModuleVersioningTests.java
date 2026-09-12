@@ -1,4 +1,4 @@
-package build.spin.module.modulesystem;
+package build.spin.module.modulesystem.maven;
 
 /*-
  * #%L
@@ -23,6 +23,7 @@ package build.spin.module.modulesystem;
 import build.base.telemetry.TelemetryRecorder;
 import build.codemodel.foundation.naming.NonCachingNameProvider;
 import build.codemodel.jdk.JDKCodeModel;
+import build.spin.module.modulesystem.ModuleVersioning;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 

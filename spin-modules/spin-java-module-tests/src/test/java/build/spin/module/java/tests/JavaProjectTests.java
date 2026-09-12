@@ -45,15 +45,15 @@ import build.spin.module.junit.Java8JUnitPlugin;
 import build.spin.module.maven.MavenRepository;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.CompilationResolution;
-import build.spin.module.modulesystem.DefaultModuleCatalog;
-import build.spin.module.modulesystem.DefaultModuleVersioning;
+import build.spin.module.modulesystem.EmptyModuleCatalog;
+import build.spin.module.modulesystem.EmptyModuleVersioning;
 import build.spin.module.modulesystem.ModuleCatalog;
 import build.spin.module.modulesystem.ModuleReference;
 import build.spin.module.modulesystem.ModuleVersioning;
-import build.spin.module.modulesystem.PomBasedModuleCatalog;
-import build.spin.module.modulesystem.PomBasedModuleVersioning;
-import build.spin.module.modulesystem.PomBasedTestModuleDescriptor;
 import build.spin.module.modulesystem.TestModuleDescriptor;
+import build.spin.module.modulesystem.maven.PomBasedModuleCatalog;
+import build.spin.module.modulesystem.maven.PomBasedModuleVersioning;
+import build.spin.module.modulesystem.maven.PomBasedTestModuleDescriptor;
 import build.spin.option.JlinkTargets;
 import build.spin.option.ReuseExternalBuildOutput;
 import build.spin.testing.RequireJavaVersion;
@@ -157,13 +157,13 @@ public class JavaProjectTests {
         // Reaching this assertion means workspace discovery completed without
         // throwing UnsatisfiedDependencyException when MavenPlugin (activated via
         // the Java25CompilerPlugin from src/main/java) tried to inject a ModuleCatalog.
-        // On a workspace without module-catalog.properties, DefaultModuleCatalog and
-        // DefaultModuleVersioning are the only resources that satisfy those injections.
+        // On a workspace without module-catalog.properties, EmptyModuleCatalog and
+        // EmptyModuleVersioning are the only resources that satisfy those injections.
         assertThat(workspace.getPlugin(Java25CompilerPlugin.class)).isPresent();
         assertThat(workspace.resources().filter(ModuleCatalog.class::isInstance).findFirst())
-            .get().isInstanceOf(DefaultModuleCatalog.class);
+            .get().isInstanceOf(EmptyModuleCatalog.class);
         assertThat(workspace.resources().filter(ModuleVersioning.class::isInstance).findFirst())
-            .get().isInstanceOf(DefaultModuleVersioning.class);
+            .get().isInstanceOf(EmptyModuleVersioning.class);
     }
 
     @Test

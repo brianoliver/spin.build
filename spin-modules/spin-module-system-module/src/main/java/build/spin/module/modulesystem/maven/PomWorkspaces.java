@@ -1,4 +1,4 @@
-package build.spin.module.modulesystem;
+package build.spin.module.modulesystem.maven;
 
 /*-
  * #%L
@@ -21,6 +21,7 @@ package build.spin.module.modulesystem;
  */
 
 import build.spin.Project;
+import build.spin.Resource;
 import build.spin.Workspace;
 import build.spin.module.modulesystem.pom.PomReader;
 
@@ -34,7 +35,7 @@ import java.nio.file.Path;
  * @author reed.vonredwitz
  * @since Apr-2026
  */
-class PomWorkspaces {
+public final class PomWorkspaces {
 
     private PomWorkspaces() {
     }
@@ -50,7 +51,7 @@ class PomWorkspaces {
      * resolved from the Maven repository (e.g. {@code spring-boot-starter-parent}) — those poms
      * declare a {@code <parent>} but their filesystem parent directory has no pom.
      */
-    static boolean isMavenWorkspaceRoot(final Path path) {
+    public static boolean isMavenWorkspaceRoot(final Path path) {
         final Path pom = path.resolve("pom.xml");
         if (!Files.exists(pom)) {
             return false;
@@ -68,8 +69,38 @@ class PomWorkspaces {
      * equivalent): the project is a Workspace and has a {@code pom.xml}, regardless of whether a
      * {@code .spinignore} marker is present.
      */
-    static boolean isMavenWorkspaceProject(final Project project) {
+    public static boolean isMavenWorkspaceProject(final Project project) {
         return project instanceof Workspace
             && Files.exists(project.path().resolve("pom.xml"));
+    }
+
+    /**
+     * The canonical {@link Resource.MetaClass#isWorkspace} predicate for a pom-based resource that
+     * cedes to a {@code configFilename} override (e.g. {@code module-catalog.properties},
+     * {@code version.properties}) when one is present, shared by every {@code PomBased*.MetaClass}
+     * that has such an override.
+     */
+    public static boolean isMavenWorkspaceRootWithoutConfig(final Path path, final String configFilename) {
+        return isMavenWorkspaceRoot(path) && !Files.exists(path.resolve(configFilename));
+    }
+
+    /**
+     * The canonical {@link Resource.MetaClass#isDetectedIn} predicate for a pom-based resource that
+     * cedes to a {@code configFilename} override when one is present, shared by every
+     * {@code PomBased*.MetaClass} that has such an override.
+     */
+    public static boolean isMavenWorkspaceProjectWithoutConfig(final Project project, final String configFilename) {
+        return isMavenWorkspaceProject(project) && !Files.exists(project.path().resolve(configFilename));
+    }
+
+    /**
+     * The canonical {@link Resource.MetaClass#isDetectedIn} predicate for the no-op fallback that
+     * activates only when neither a {@code configFilename} override nor a {@code pom.xml} is
+     * present, shared by every {@code Empty*.MetaClass}.
+     */
+    public static boolean isConfigless(final Project project, final String configFilename) {
+        return project instanceof Workspace
+            && !Files.exists(project.path().resolve(configFilename))
+            && !Files.exists(project.path().resolve("pom.xml"));
     }
 }

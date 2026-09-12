@@ -22,9 +22,9 @@ package build.spin.module.modulesystem;
 
 import build.spin.Project;
 import build.spin.Resource;
-import build.spin.Workspace;
+import build.spin.module.modulesystem.maven.PomWorkspaces;
+import build.spin.module.modulesystem.properties.PropertiesModuleCatalog;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -36,7 +36,7 @@ import java.util.stream.Stream;
  * @author reed.vonredwitz
  * @since Apr-2026
  */
-public class DefaultModuleCatalog
+public class EmptyModuleCatalog
     implements ModuleCatalog, Resource {
 
     /**
@@ -61,7 +61,7 @@ public class DefaultModuleCatalog
     }
 
     /**
-     * The {@link Resource.MetaClass} for {@link DefaultModuleCatalog}.
+     * The {@link Resource.MetaClass} for {@link EmptyModuleCatalog}.
      */
     public static class MetaClass
         implements Resource.MetaClass {
@@ -73,9 +73,7 @@ public class DefaultModuleCatalog
 
         @Override
         public boolean isDetectedIn(final Project project) {
-            return project instanceof Workspace
-                && !Files.exists(project.path().resolve(ProjectModuleCatalog.MODULE_CATALOG_FILENAME))
-                && !Files.exists(project.path().resolve("pom.xml"));
+            return PomWorkspaces.isConfigless(project, PropertiesModuleCatalog.MODULE_CATALOG_FILENAME);
         }
     }
 }
