@@ -40,6 +40,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Predicate;
 
 /**
  * Walks a Maven workspace's {@code pom.xml} files and their transitive dependencies from the
@@ -78,11 +79,32 @@ final class PomDependencyGraphWalker {
     /**
      * Walks the workspace pom tree, then follows module-info.class requires transitively
      * through the local repository, invoking {@code visitor} for every coordinate found.
+     * <p>
+     * Equivalent to calling {@link #walk(Path, Path, TelemetryRecorder, CodeModel, Predicate, CoordinateVisitor)}
+     * with a {@code isIgnored} predicate that never ignores anything.
      */
     static void walk(final Path workspacePath,
                      final Path localRepo,
                      final TelemetryRecorder recorder,
                      final CodeModel codeModel,
+                     final CoordinateVisitor visitor) {
+        walk(workspacePath, localRepo, recorder, codeModel, path -> false, visitor);
+    }
+
+    /**
+     * Walks the workspace pom tree, then follows module-info.class requires transitively
+     * through the local repository, invoking {@code visitor} for every coordinate found.
+     * <p>
+     * Directories for which {@code isIgnored} returns {@code true} (e.g. a {@code .spinignore}'d
+     * {@code .worktrees} folder) are pruned from the workspace pom walk entirely, the same way
+     * {@code target}/{@code .build} directories are — a workspace's own {@code .spinignore} rules
+     * must not be silently bypassed by pom-based module discovery.
+     */
+    static void walk(final Path workspacePath,
+                     final Path localRepo,
+                     final TelemetryRecorder recorder,
+                     final CodeModel codeModel,
+                     final Predicate<Path> isIgnored,
                      final CoordinateVisitor visitor) {
         final Path rootPom = workspacePath.resolve(POM_FILENAME);
         if (!Files.exists(rootPom)) {
@@ -106,7 +128,7 @@ final class PomDependencyGraphWalker {
                 @Override
                 public FileVisitResult preVisitDirectory(final Path dir, final BasicFileAttributes attrs) {
                     final String name = dir.getFileName() == null ? "" : dir.getFileName().toString();
-                    if (name.equals("target") || name.equals(".build")) {
+                    if (name.equals("target") || name.equals(".build") || isIgnored.test(dir)) {
                         return FileVisitResult.SKIP_SUBTREE;
                     }
                     return FileVisitResult.CONTINUE;

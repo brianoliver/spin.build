@@ -33,6 +33,7 @@ import jakarta.inject.Inject;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
+import java.util.function.Predicate;
 import java.util.stream.Stream;
 
 /**
@@ -71,7 +72,8 @@ public class PomBasedModuleCatalog
     @PostInject
     private void onInjected() {
         this.localRepo = this.localMavenRepository.path();
-        this.catalog = buildFromWorkspace(this.project.path(), this.localRepo, this.codeModel, this.recorder);
+        this.catalog = buildFromWorkspace(
+            this.project.path(), this.localRepo, this.codeModel, this.recorder, this.project::isIgnored);
     }
 
     /**
@@ -91,9 +93,22 @@ public class PomBasedModuleCatalog
                                             final Path localRepo,
                                             final CodeModel codeModel,
                                             final TelemetryRecorder recorder) {
+        return buildFromWorkspace(workspacePath, localRepo, codeModel, recorder, path -> false);
+    }
+
+    /**
+     * Builds a {@link ModuleCatalog} from a Maven workspace, pruning any directory for which
+     * {@code isIgnored} returns {@code true} (e.g. one excluded via {@code .spinignore}) from the
+     * pom walk. Package-private to allow direct testing.
+     */
+    static ModuleCatalog buildFromWorkspace(final Path workspacePath,
+                                            final Path localRepo,
+                                            final CodeModel codeModel,
+                                            final TelemetryRecorder recorder,
+                                            final Predicate<Path> isIgnored) {
         final ModuleCatalog result = ModuleCatalog.HeapBased.create();
 
-        PomDependencyGraphWalker.walk(workspacePath, localRepo, recorder, codeModel,
+        PomDependencyGraphWalker.walk(workspacePath, localRepo, recorder, codeModel, isIgnored,
             (names, groupId, artifactId, version) -> {
                 try {
                     final Artifact.Constraint constraint = Artifact.Constraint.of(
