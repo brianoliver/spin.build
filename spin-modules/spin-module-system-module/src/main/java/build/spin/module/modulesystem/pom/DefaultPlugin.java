@@ -29,10 +29,8 @@ import java.util.Optional;
  * @author reed.vonredwitz
  * @since Apr-2026
  */
-public record DefaultPlugin(String groupId,
-                            String artifactId,
+public record DefaultPlugin(GA ga,
                             Optional<String> version,
                             ConfigNode configuration,
-                            List<Dependency> dependencies
-) implements Plugin {
+                            List<Dependency> dependencies) implements Plugin {
 }

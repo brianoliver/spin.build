@@ -75,10 +75,15 @@ class PomResolver {
      * {@code jar}, {@code pom}) and optional {@code classifier} that select which file of that
      * artifact is wanted.
      */
-    record Coordinates(Gav gav, String extension, Optional<String> classifier) {
+    record Coordinates(Gav gav,
+                       String extension,
+                       Optional<String> classifier) {
 
-        static Coordinates of(final String groupId, final String artifactId, final String version,
-                              final String extension, final String classifier) {
+        static Coordinates of(final String groupId,
+                              final String artifactId,
+                              final String version,
+                              final String extension,
+                              final String classifier) {
             return new Coordinates(new Gav(groupId, artifactId, version), extension, Optional.ofNullable(classifier));
         }
     }
@@ -115,8 +120,7 @@ class PomResolver {
         // repository-only reader: no <relativePath> reactor to walk, and both parent and
         // BOM-import lookups go through downloadIfNeeded so missing POMs are fetched on demand
         this.pomReader = new PomReader(localRepository, recorder, false,
-            (groupId, artifactId, version) ->
-                downloadIfNeeded(new Coordinates(new Gav(groupId, artifactId, version), "pom", Optional.empty())));
+            gav -> downloadIfNeeded(new Coordinates(gav, "pom", Optional.empty())));
     }
 
     static PomResolver fromSettings(final TelemetryRecorder recorder, final boolean offline) {
@@ -331,7 +335,7 @@ class PomResolver {
                     }
                     if (dep.version().isEmpty()
                         || visited.contains(dep.ga())
-                        || isExcluded(dep.groupId(), dep.artifactId(), node.excluded())) {
+                        || isExcluded(dep.ga(), node.excluded())) {
                         continue;
                     }
                     final Set<String> childExcluded;
@@ -341,8 +345,7 @@ class PomResolver {
                         childExcluded = new HashSet<>(node.excluded());
                         childExcluded.addAll(dep.exclusions());
                     }
-                    queue.add(new TransitiveNode(
-                        new Gav(dep.groupId(), dep.artifactId(), dep.version().get()),
+                    queue.add(new TransitiveNode(Gav.of(dep.ga(), dep.version().get()),
                         node.depth() + 1, childExcluded));
                 }
             } catch (final Exception e) {
@@ -360,8 +363,7 @@ class PomResolver {
         for (final Map.Entry<GA, String> entry : winningVersion.entrySet()) {
             final GA ga = entry.getKey();
             final String extension = ga.equals(rootGa) ? rootExtension : "jar";
-            downloadIfNeeded(new Coordinates(new Gav(ga.groupId(), ga.artifactId(), entry.getValue()),
-                extension, Optional.empty()))
+            downloadIfNeeded(new Coordinates(Gav.of(ga, entry.getValue()), extension, Optional.empty()))
                 .ifPresent(result::add);
         }
 
@@ -372,7 +374,8 @@ class PomResolver {
      * Matches {@code groupId:artifactId} against a set of {@code <exclusion>} patterns, each side of
      * which may be the Maven wildcard {@code *}.
      */
-    private static boolean isExcluded(final String groupId, final String artifactId, final Set<String> patterns) {
+    private static boolean isExcluded(final GA ga,
+                                      final Set<String> patterns) {
         if (patterns.isEmpty()) {
             return false;
         }
@@ -383,8 +386,8 @@ class PomResolver {
             }
             final String patternGroupId = pattern.substring(0, colon);
             final String patternArtifactId = pattern.substring(colon + 1);
-            if (("*".equals(patternGroupId) || patternGroupId.equals(groupId))
-                && ("*".equals(patternArtifactId) || patternArtifactId.equals(artifactId))) {
+            if (("*".equals(patternGroupId) || patternGroupId.equals(ga.groupId()))
+                && ("*".equals(patternArtifactId) || patternArtifactId.equals(ga.artifactId()))) {
                 return true;
             }
         }

@@ -63,7 +63,5 @@ public sealed interface Dependency
     /**
      * The {@code (groupId, artifactId)} key for this dependency.
      */
-    default GA ga() {
-        return new GA(groupId(), artifactId());
-    }
+    GA ga();
 }

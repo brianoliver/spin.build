@@ -79,7 +79,7 @@ public final class PomReader {
      */
     @FunctionalInterface
     public interface PomLocator {
-        Optional<Path> locate(String groupId, String artifactId, String version);
+        Optional<Path> locate(Gav gav);
     }
 
     private static final Pattern PROPERTY_REF = Pattern.compile("\\$\\{([^}]+)}");
@@ -102,8 +102,7 @@ public final class PomReader {
      */
     public PomReader(final Path localRepository,
                      final TelemetryRecorder recorder) {
-        this(localRepository, recorder, true,
-            (groupId, artifactId, version) -> localRepoPomPath(localRepository, groupId, artifactId, version));
+        this(localRepository, recorder, true, gav -> localRepoPomPath(localRepository, gav));
     }
 
     /**
@@ -261,9 +260,7 @@ public final class PomReader {
         }
 
         final Pom pom = new DefaultPom(
-            groupId,
-            artifactId,
-            version,
+            Gav.of(groupId, artifactId, version),
             orDefault(raw.packaging, "jar"),
             parent,
             Collections.unmodifiableMap(effectiveProps),
@@ -305,7 +302,7 @@ public final class PomReader {
                     bomGroupId, bomArtifactId);
                 continue;
             }
-            this.locator.locate(bomGroupId, bomArtifactId, bomVersion).ifPresentOrElse(bomPath -> {
+            this.locator.locate(Gav.of(bomGroupId, bomArtifactId, bomVersion)).ifPresentOrElse(bomPath -> {
                 final Pom bom = readEffective(bomPath.toAbsolutePath().normalize(), visited);
                 if (bom != null) {
                     bom.dependencyManagement().forEach(out::putIfAbsent);
@@ -341,7 +338,7 @@ public final class PomReader {
         if (raw.parent.version() == null || raw.parent.version().contains("${")) {
             return Optional.empty();
         }
-        return this.locator.locate(raw.parent.groupId(), raw.parent.artifactId(), raw.parent.version())
+        return this.locator.locate(raw.parent)
             .map(repoPath -> readEffective(repoPath.toAbsolutePath().normalize(), visited));
     }
 
@@ -619,7 +616,7 @@ public final class PomReader {
         final Optional<String> classifier = optInterpolated(rd.classifier(), props)
             .or(() -> managed == null ? Optional.empty() : managed.classifier());
 
-        return new DefaultDependency(groupId, artifactId, version, scope, type, classifier,
+        return new DefaultDependency(new GA(groupId, artifactId), version, scope, type, classifier,
             rd.optional(), rd.exclusions());
     }
 
@@ -632,7 +629,7 @@ public final class PomReader {
         final List<Dependency> dependencies = rp.dependencies().stream()
             .map(rd -> toEffectiveDependency(rd, props, Map.of()))
             .toList();
-        return new DefaultPlugin(groupId, artifactId, version, interpolated, dependencies);
+        return new DefaultPlugin(new GA(groupId, artifactId), version, interpolated, dependencies);
     }
 
     /**
@@ -653,8 +650,7 @@ public final class PomReader {
             depsByGa.put(ownDep.ga(), managed == null ? ownDep : mergeDependency(managed, ownDep));
         }
         return new DefaultPlugin(
-            own.groupId(),
-            own.artifactId(),
+            own.ga(),
             own.version().or(parent::version),
             mergeConfig(parent.configuration(), own.configuration()),
             List.copyOf(depsByGa.values()));
@@ -672,8 +668,7 @@ public final class PomReader {
     private static Dependency mergeDependency(final Dependency parent,
                                               final Dependency own) {
         return new DefaultDependency(
-            own.groupId(),
-            own.artifactId(),
+            own.ga(),
             own.version().or(parent::version),
             own.scope(),
             own.type(),
@@ -951,14 +946,12 @@ public final class PomReader {
      * {@code <localRepo>/<groupId-as-path>/<artifactId>/<version>/<artifactId>-<version>.pom}
      */
     public static Optional<Path> localRepoPomPath(final Path localRepository,
-                                                   final String groupId,
-                                                   final String artifactId,
-                                                   final String version) {
+                                                  final Gav gav) {
         final Path pomPath = localRepository
-            .resolve(groupId.replace('.', '/'))
-            .resolve(artifactId)
-            .resolve(version)
-            .resolve(artifactId + "-" + version + ".pom");
+            .resolve(gav.groupId().replace('.', '/'))
+            .resolve(gav.artifactId())
+            .resolve(gav.version())
+            .resolve(gav.artifactId() + "-" + gav.version() + ".pom");
         return Files.exists(pomPath) ? Optional.of(pomPath) : Optional.empty();
     }
 }

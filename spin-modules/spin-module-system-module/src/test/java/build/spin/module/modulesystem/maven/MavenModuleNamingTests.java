@@ -20,6 +20,7 @@ package build.spin.module.modulesystem.maven;
  * #L%
  */
 
+import build.spin.module.modulesystem.pom.Gav;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -112,11 +113,10 @@ class MavenModuleNamingTests {
         Files.createDirectories(jarDir);
         Files.createFile(jarDir.resolve("spin-clean-module-0.1.0.jar"));
 
-        final String[] coord =
-            MavenModuleNaming.findJarByModuleName("build.spin.module.clean", "0.1.0", repo).orElseThrow();
-        assertThat(coord[0]).isEqualTo("build.spin.module");
-        assertThat(coord[1]).isEqualTo("spin-clean-module");
-        assertThat(coord[2]).isEqualTo("0.1.0");
+        final Gav gav = MavenModuleNaming.findJarByModuleName("build.spin.module.clean", "0.1.0", repo).orElseThrow();
+        assertThat(gav.groupId()).isEqualTo("build.spin.module");
+        assertThat(gav.artifactId()).isEqualTo("spin-clean-module");
+        assertThat(gav.version()).isEqualTo("0.1.0");
     }
 
     @Test
@@ -130,9 +130,9 @@ class MavenModuleNamingTests {
         Files.createDirectories(jarDir);
         Files.createFile(jarDir.resolve("helidon-config-1.0.0.jar"));
 
-        final String[] coord = MavenModuleNaming.findJarByModuleName("io.helidon.config", "1.0.0", repo).orElseThrow();
-        assertThat(coord[0]).isEqualTo("io.helidon.config");
-        assertThat(coord[1]).isEqualTo("helidon-config");
-        assertThat(coord[2]).isEqualTo("1.0.0");
+        final Gav gav = MavenModuleNaming.findJarByModuleName("io.helidon.config", "1.0.0", repo).orElseThrow();
+        assertThat(gav.groupId()).isEqualTo("io.helidon.config");
+        assertThat(gav.artifactId()).isEqualTo("helidon-config");
+        assertThat(gav.version()).isEqualTo("1.0.0");
     }
 }

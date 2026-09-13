@@ -36,10 +36,6 @@ import java.util.Optional;
 public sealed interface Plugin
     permits DefaultPlugin {
 
-    String groupId();
-
-    String artifactId();
-
     Optional<String> version();
 
     ConfigNode configuration();
@@ -56,7 +52,5 @@ public sealed interface Plugin
     /**
      * The {@code (groupId, artifactId)} key for this plugin.
      */
-    default GA ga() {
-        return new GA(groupId(), artifactId());
-    }
+    GA ga();
 }
