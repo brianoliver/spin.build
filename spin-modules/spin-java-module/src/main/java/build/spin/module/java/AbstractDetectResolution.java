@@ -39,9 +39,8 @@ import build.spin.module.modulesystem.CompilationResolution;
 import build.spin.module.modulesystem.ModuleCatalog;
 import build.spin.module.modulesystem.ModuleReference;
 import build.spin.module.modulesystem.ModuleVersioning;
-import build.spin.module.modulesystem.maven.LocalMavenRepository;
+import build.spin.module.modulesystem.maven.ProjectPom;
 import build.spin.module.modulesystem.pom.Pom;
-import build.spin.module.modulesystem.pom.PomReader;
 import build.spin.option.BuildDirectoryName;
 import build.spin.option.ReuseExternalBuildOutput;
 import build.spin.option.TargetDirectoryName;
@@ -117,7 +116,7 @@ public abstract class AbstractDetectResolution
     private TelemetryRecorder recorder;
 
     @Inject
-    private LocalMavenRepository localMavenRepository;
+    private ProjectPom projectPom;
 
     /**
      * Whether already-built Maven/Gradle output is trusted as equivalent to spin's own {@code .build/}
@@ -235,7 +234,7 @@ public abstract class AbstractDetectResolution
         // and would otherwise pull an excluded jar down that subtree — passing the edge's exclusions
         // in lets PomResolver's own BFS exclusion-inheritance drop it, exactly as Maven does.
         final Map<String, Set<String>> exclusionsByCoordinate = projectDependencyExclusions(
-            this.project.path(), this.localMavenRepository.path(), this.recorder);
+            this.project.path(), this.projectPom, this.recorder);
 
         for (final RequiresModuleDescriptor r : externalRequires.values()) {
             final Optional<Artifact> artifact = resolveExternalArtifact(
@@ -320,25 +319,21 @@ public abstract class AbstractDetectResolution
      * {@link Artifact.Resolver#resolveTransitive(Artifact, Set)}.
      *
      * @param projectPath the project root
-     * @param localRepository the local Maven repository, for the pom's own parent/BOM resolution
+     * @param projectPom reads the project's effective pom
      * @param recorder the {@link TelemetryRecorder} for diagnostics
      *
      * @return the exclusion sets, keyed by {@code "groupId:artifactId"}
      */
     // Visible for testing.
     static Map<String, Set<String>> projectDependencyExclusions(final Path projectPath,
-                                                                final Path localRepository,
+                                                                final ProjectPom projectPom,
                                                                 final TelemetryRecorder recorder) {
-        final Path pom = projectPath.resolve("pom.xml");
-        if (!Files.exists(pom)) {
-            return Map.of();
-        }
         try {
-            return new PomReader(localRepository, recorder).read(pom)
+            return projectPom.get(projectPath)
                 .map(AbstractDetectResolution::edgeExclusions)
                 .orElseGet(Map::of);
         } catch (final Exception e) {
-            recorder.diagnostic("Failed to read <exclusions> from [%s]: %s", pom, e.getMessage());
+            recorder.diagnostic("Failed to read <exclusions> from [%s]: %s", projectPath, e.getMessage());
             return Map.of();
         }
     }
