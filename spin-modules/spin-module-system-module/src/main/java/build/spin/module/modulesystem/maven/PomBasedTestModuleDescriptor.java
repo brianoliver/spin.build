@@ -32,10 +32,8 @@ import build.spin.Resource;
 import build.spin.module.modulesystem.TestModuleDescriptor;
 import build.spin.module.modulesystem.pom.Dependency;
 import build.spin.module.modulesystem.pom.Pom;
-import build.spin.module.modulesystem.pom.PomReader;
 import jakarta.inject.Inject;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
 
@@ -45,19 +43,17 @@ import java.util.Optional;
  * {@code src/test/java/module-info.java} is present.
  * <p>
  * This resource is workspace-level. The {@link #get(Project)} method reads the specific
- * sub-project's effective pom on each call via {@link PomReader} — parent inheritance,
- * {@code <dependencyManagement>}, and active-profile evaluation all apply, so only dependencies
- * that are actually part of the project's dependency graph contribute a {@code requires}.
- * Dependencies without an explicit (or dependency-management-filled) version are still
- * registered; their versions are resolved later via {@code ModuleVersioning}.
+ * sub-project's effective pom on each call via the injected {@link ProjectPom} — parent
+ * inheritance, {@code <dependencyManagement>}, and active-profile evaluation all apply, so only
+ * dependencies that are actually part of the project's dependency graph contribute a
+ * {@code requires}. Dependencies without an explicit (or dependency-management-filled) version
+ * are still registered; their versions are resolved later via {@code ModuleVersioning}.
  *
  * @author reed.vonredwitz
  * @since Apr-2026
  */
 public class PomBasedTestModuleDescriptor
     implements TestModuleDescriptor, Resource {
-
-    private static final String POM_FILENAME = "pom.xml";
 
     @Inject
     private TelemetryRecorder recorder;
@@ -66,7 +62,7 @@ public class PomBasedTestModuleDescriptor
     private CodeModel codeModel;
 
     @Inject
-    private LocalMavenRepository localMavenRepository;
+    private ProjectPom projectPom;
 
     @Override
     public JDKModuleDescriptor get(final Project project) {
@@ -80,12 +76,7 @@ public class PomBasedTestModuleDescriptor
         descriptor.addTrait(ModuleModifier.AUTOMATIC);
 
         try {
-            final Path projectPom = project.path().resolve(POM_FILENAME);
-            if (Files.exists(projectPom)) {
-                final PomReader pomReader = new PomReader(this.localMavenRepository.path(), this.recorder);
-                registerTestRequires(pomReader, projectPom, descriptor);
-            }
-
+            registerTestRequires(project, descriptor);
         } catch (final Exception e) {
             this.recorder.warn(e, "PomBasedTestModuleDescriptor failed for [%s]", project.name());
         }
@@ -93,11 +84,9 @@ public class PomBasedTestModuleDescriptor
         return descriptor;
     }
 
-    private void registerTestRequires(final PomReader pomReader,
-                                      final Path pomPath,
-                                      final JDKModuleDescriptor descriptor) {
+    private void registerTestRequires(final Project project, final JDKModuleDescriptor descriptor) {
         try {
-            final Optional<Pom> pom = pomReader.read(pomPath);
+            final Optional<Pom> pom = this.projectPom.get(project);
             if (pom.isEmpty()) {
                 return;
             }
@@ -119,7 +108,7 @@ public class PomBasedTestModuleDescriptor
                 }
             }
         } catch (final Exception e) {
-            this.recorder.warn(e, "PomBasedTestModuleDescriptor failed to read test deps from [%s]", pomPath);
+            this.recorder.warn(e, "PomBasedTestModuleDescriptor failed to read test deps for [%s]", project.name());
         }
     }
 

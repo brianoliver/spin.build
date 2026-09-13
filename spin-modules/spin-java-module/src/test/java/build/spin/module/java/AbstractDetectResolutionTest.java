@@ -40,6 +40,8 @@ import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleCatalog;
 import build.spin.module.modulesystem.ModuleReference;
 import build.spin.module.modulesystem.ModuleVersioning;
+import build.spin.module.modulesystem.maven.LocalMavenRepository;
+import build.spin.module.modulesystem.maven.ProjectPom;
 import build.spin.option.ReuseExternalBuildOutput;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -883,21 +885,22 @@ class AbstractDetectResolutionTest {
                 && t.toString().contains("5.23.0"));
     }
 
-    // writes the given pom.xml body as the project's own pom -- the "repository" path handed to
-    // projectDependencyExclusions points nowhere because the fixtures below are self-contained
-    // (no parent, no dependencyManagement), so no local repository lookup is needed.
+    // writes the given pom.xml body as the project's own pom -- the "repository" backing the
+    // ProjectPom handed to projectDependencyExclusions points nowhere because the fixtures below
+    // are self-contained (no parent, no dependencyManagement), so no local repository lookup is
+    // needed.
     private void writeProjectPom(final String xml) throws IOException {
         Files.writeString(projectRoot.resolve("pom.xml"), xml);
     }
 
-    private Path noRepository() {
-        return projectRoot.resolve("no-such-repository");
+    private ProjectPom projectPom() {
+        return ProjectPom.of(LocalMavenRepository.of(projectRoot.resolve("no-such-repository")), recorder());
     }
 
     @Test
     void projectDependencyExclusions_noPom_returnsEmpty() {
         assertThat(AbstractDetectResolution.projectDependencyExclusions(
-            projectRoot, noRepository(), recorder())).isEmpty();
+            projectRoot, projectPom(), recorder())).isEmpty();
     }
 
     @Test
@@ -934,7 +937,7 @@ class AbstractDetectResolutionTest {
             </project>
             """);
 
-        assertThat(AbstractDetectResolution.projectDependencyExclusions(projectRoot, noRepository(), recorder()))
+        assertThat(AbstractDetectResolution.projectDependencyExclusions(projectRoot, projectPom(), recorder()))
             .containsOnlyKeys("org.example:lib")
             .hasEntrySatisfying("org.example:lib", exclusions -> assertThat(exclusions)
                 .containsExactlyInAnyOrder("commons-logging:commons-logging", "org.unwanted:*"));
@@ -959,7 +962,7 @@ class AbstractDetectResolutionTest {
             """);
 
         assertThat(AbstractDetectResolution.projectDependencyExclusions(
-            projectRoot, noRepository(), recorder())).isEmpty();
+            projectRoot, projectPom(), recorder())).isEmpty();
     }
 
     @Test
@@ -970,6 +973,6 @@ class AbstractDetectResolutionTest {
         writeProjectPom("<project><this is not well-formed xml");
 
         assertThat(AbstractDetectResolution.projectDependencyExclusions(
-            projectRoot, noRepository(), recorder())).isEmpty();
+            projectRoot, projectPom(), recorder())).isEmpty();
     }
 }

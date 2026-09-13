@@ -217,10 +217,12 @@ class PomBasedTestModuleDescriptorTests {
         when(project.path()).thenReturn(workspace);
         when(project.name()).thenReturn("root");
 
+        final ProjectPom projectPom = new ProjectPom(LocalMavenRepository.of(this.localRepo), RECORDER);
+
         final PomBasedTestModuleDescriptor descriptor = new PomBasedTestModuleDescriptor();
         inject(descriptor, "recorder", RECORDER);
         inject(descriptor, "codeModel", CODE_MODEL);
-        inject(descriptor, "localMavenRepository", LocalMavenRepository.of(this.localRepo));
+        inject(descriptor, "projectPom", projectPom);
 
         final JDKModuleDescriptor result = descriptor.get(project);
         return result.requiresClauses()
