@@ -45,6 +45,8 @@ public sealed interface Pom
 
     String version();
 
+    Gav gav();
+
     /**
      * The {@code <packaging>} of this project (e.g. {@code jar}, {@code pom}, {@code war}),
      * defaulting to {@code jar} when not declared. Unlike groupId/version, packaging is not

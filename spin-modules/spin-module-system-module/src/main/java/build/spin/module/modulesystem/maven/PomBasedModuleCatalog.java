@@ -110,14 +110,13 @@ public class PomBasedModuleCatalog
         final ModuleCatalog result = ModuleCatalog.HeapBased.create();
 
         PomDependencyGraphWalker.walk(workspacePath, localRepo, recorder, codeModel, isIgnored,
-            (names, groupId, artifactId, version) -> {
+            (names, gav) -> {
                 try {
                     final Artifact.Constraint constraint = Artifact.Constraint.of(
-                        Artifact.create(groupId, artifactId, version, "jar"));
+                        Artifact.create(gav.groupId(), gav.artifactId(), gav.version(), "jar"));
                     names.forEach(name -> result.add(name, constraint));
                 } catch (final Exception e) {
-                    recorder.warn(e, "PomBasedModuleCatalog failed to register [%s:%s:%s]",
-                        groupId, artifactId, version);
+                    recorder.warn(e, "PomBasedModuleCatalog failed to register [%s]", gav);
                 }
             });
 
@@ -144,8 +143,8 @@ public class PomBasedModuleCatalog
         // Fallback: infer groupId/artifactId from the module name convention and probe the local repo.
         final String version = reference.version().get().toString();
         return MavenModuleNaming.findJarByModuleName(reference.name(), version, this.localRepo)
-            .map(c -> {
-                final Artifact artifact = Artifact.create(c[0], c[1], c[2], "jar");
+            .map(gav -> {
+                final Artifact artifact = Artifact.create(gav.groupId(), gav.artifactId(), gav.version(), "jar");
                 final Artifact.Constraint constraint = Artifact.Constraint.of(artifact);
                 this.catalog.add(reference.name(), constraint);
                 return artifact;

@@ -23,6 +23,7 @@ package build.spin.module.modulesystem.maven;
 import build.base.telemetry.TelemetryRecorder;
 import build.codemodel.foundation.naming.NonCachingNameProvider;
 import build.codemodel.jdk.JDKCodeModel;
+import build.spin.module.modulesystem.pom.Gav;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -89,7 +90,7 @@ class PomDependencyGraphWalkerTests {
         PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         final Visit v = visitor.forCoordinate("org.junit.jupiter", "junit-jupiter-api");
-        assertThat(v.version).isEqualTo("5.10.0");
+        assertThat(v.version()).isEqualTo("5.10.0");
         assertThat(v.names).contains("org.junit.jupiter", "junit.jupiter.api");
     }
 
@@ -116,7 +117,7 @@ class PomDependencyGraphWalkerTests {
         final CollectingVisitor visitor = new CollectingVisitor();
         PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
-        assertThat(visitor.forCoordinate("org.assertj", "assertj-core").version).isEqualTo("3.25.0");
+        assertThat(visitor.forCoordinate("org.assertj", "assertj-core").version()).isEqualTo("3.25.0");
     }
 
     @Test
@@ -162,7 +163,7 @@ class PomDependencyGraphWalkerTests {
         final CollectingVisitor visitor = new CollectingVisitor();
         PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
-        assertThat(visitor.forCoordinate("build.base", "base-marshalling").version).isEqualTo("0.22.1");
+        assertThat(visitor.forCoordinate("build.base", "base-marshalling").version()).isEqualTo("0.22.1");
     }
 
     // -------------------------------------------------------------------------
@@ -417,7 +418,7 @@ class PomDependencyGraphWalkerTests {
 
         // child's groupId/version inherited from <parent>; names come from derivation
         final Visit v = visitor.forCoordinate("com.example", "child-module");
-        assertThat(v.version).isEqualTo("2.0.0");
+        assertThat(v.version()).isEqualTo("2.0.0");
         assertThat(v.names).contains("com.example", "child.module");
     }
 
@@ -496,7 +497,7 @@ class PomDependencyGraphWalkerTests {
         final CollectingVisitor visitor = new CollectingVisitor();
         PomDependencyGraphWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
 
-        assertThat(visitor.forCoordinate("build.codemodel", "codemodel-expression").version)
+        assertThat(visitor.forCoordinate("build.codemodel", "codemodel-expression").version())
             .isEqualTo("0.19.0");
     }
 
@@ -682,7 +683,7 @@ class PomDependencyGraphWalkerTests {
         final CollectingVisitor visitor = new CollectingVisitor();
         PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
-        assertThat(visitor.forCoordinate("com.example", "sibling").version).isEqualTo("2.0.0");
+        assertThat(visitor.forCoordinate("com.example", "sibling").version()).isEqualTo("2.0.0");
     }
 
     // -------------------------------------------------------------------------
@@ -862,7 +863,7 @@ class PomDependencyGraphWalkerTests {
 
         // ${project.groupId}/${project.version} must resolve against the submodule's OWN
         // coordinates (com.acme.sub:2.0.0), not the parent's (com.example:1.0.0)
-        assertThat(visitor.forCoordinate("com.acme.sub", "sibling-artifact").version).isEqualTo("2.0.0");
+        assertThat(visitor.forCoordinate("com.acme.sub", "sibling-artifact").version()).isEqualTo("2.0.0");
     }
 
     @Test
@@ -932,7 +933,7 @@ class PomDependencyGraphWalkerTests {
         final CollectingVisitor visitor = new CollectingVisitor();
         PomDependencyGraphWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
 
-        assertThat(visitor.forCoordinate("build.base", "base-marshalling").version).isEqualTo("0.22.1");
+        assertThat(visitor.forCoordinate("build.base", "base-marshalling").version()).isEqualTo("0.22.1");
     }
 
     @Test
@@ -1071,7 +1072,7 @@ class PomDependencyGraphWalkerTests {
         final CollectingVisitor visitor = new CollectingVisitor();
         PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
-        assertThat(visitor.forCoordinate("com.acme.sub", "managed-sibling").version).isEqualTo("3.0.0");
+        assertThat(visitor.forCoordinate("com.acme.sub", "managed-sibling").version()).isEqualTo("3.0.0");
     }
 
     // -------------------------------------------------------------------------
@@ -1151,7 +1152,7 @@ class PomDependencyGraphWalkerTests {
 
         // base-marshalling has no literal version in consumer's pom -- it is only resolvable
         // because the imported BOM's dependencyManagement entry was merged in
-        assertThat(visitor.forCoordinate("build.base", "base-marshalling").version).isEqualTo("0.22.1");
+        assertThat(visitor.forCoordinate("build.base", "base-marshalling").version()).isEqualTo("0.22.1");
     }
 
     @Test
@@ -1228,7 +1229,7 @@ class PomDependencyGraphWalkerTests {
         PomDependencyGraphWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
 
         // consumer's own literal entry (0.99.0) must win over the imported BOM's (0.22.1)
-        assertThat(visitor.forCoordinate("build.base", "base-marshalling").version).isEqualTo("0.99.0");
+        assertThat(visitor.forCoordinate("build.base", "base-marshalling").version()).isEqualTo("0.99.0");
     }
 
     // -------------------------------------------------------------------------
@@ -1262,7 +1263,7 @@ class PomDependencyGraphWalkerTests {
         // only the workspace root pom is visited; the stale pom under the pruned .worktrees
         // directory must never be reached
         assertThat(visitor.visits).hasSize(1);
-        assertThat(visitor.forCoordinate("com.example", "root").version).isEqualTo("1.0.0");
+        assertThat(visitor.forCoordinate("com.example", "root").version()).isEqualTo("1.0.0");
     }
 
     @Test
@@ -1288,7 +1289,7 @@ class PomDependencyGraphWalkerTests {
         final CollectingVisitor visitor = new CollectingVisitor();
         PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
-        assertThat(visitor.forCoordinate("com.example", "sub").version).isEqualTo("1.0.0");
+        assertThat(visitor.forCoordinate("com.example", "sub").version()).isEqualTo("1.0.0");
     }
 
     // -------------------------------------------------------------------------
@@ -1346,15 +1347,13 @@ class PomDependencyGraphWalkerTests {
 
         @Override
         public void accept(final List<String> moduleNames,
-                           final String groupId,
-                           final String artifactId,
-                           final String resolvedVersion) {
-            this.visits.add(new Visit(List.copyOf(moduleNames), groupId, artifactId, resolvedVersion));
+                           final Gav gav) {
+            this.visits.add(new Visit(List.copyOf(moduleNames), gav));
         }
 
         Visit forCoordinate(final String groupId, final String artifactId) {
             return this.visits.stream()
-                .filter(v -> v.groupId.equals(groupId) && v.artifactId.equals(artifactId))
+                .filter(v -> v.groupId().equals(groupId) && v.artifactId().equals(artifactId))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError(
                     "Expected visit for [" + groupId + ":" + artifactId + "] not found among " + this.visits));
@@ -1362,10 +1361,22 @@ class PomDependencyGraphWalkerTests {
 
         boolean coordinateVisited(final String groupId, final String artifactId) {
             return this.visits.stream()
-                .anyMatch(v -> v.groupId.equals(groupId) && v.artifactId.equals(artifactId));
+                .anyMatch(v -> v.groupId().equals(groupId) && v.artifactId().equals(artifactId));
         }
     }
 
-    private record Visit(List<String> names, String groupId, String artifactId, String version) {
+    private record Visit(List<String> names,
+                         Gav gav) {
+        String groupId() {
+            return gav.groupId();
+        }
+
+        String artifactId() {
+            return gav.artifactId();
+        }
+
+        String version() {
+            return gav.version();
+        }
     }
 }

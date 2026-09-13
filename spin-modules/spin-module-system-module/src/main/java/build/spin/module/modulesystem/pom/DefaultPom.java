@@ -30,15 +30,26 @@ import java.util.Optional;
  * @author reed.vonredwitz
  * @since Apr-2026
  */
-public record DefaultPom(String groupId,
-                         String artifactId,
-                         String version,
+public record DefaultPom(Gav gav,
                          String packaging,
                          Optional<Pom> parent,
                          Map<String, String> properties,
                          Map<GA, Dependency> dependencyManagement,
                          List<Dependency> dependencies,
                          Map<GA, Plugin> pluginManagement,
-                         List<Plugin> plugins
-) implements Pom {
+                         List<Plugin> plugins) implements Pom {
+    @Override
+    public String groupId() {
+        return gav.groupId();
+    }
+
+    @Override
+    public String artifactId() {
+        return gav.artifactId();
+    }
+
+    @Override
+    public String version() {
+        return gav.version();
+    }
 }

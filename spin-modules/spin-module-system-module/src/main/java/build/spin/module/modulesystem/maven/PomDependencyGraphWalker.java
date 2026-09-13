@@ -25,6 +25,7 @@ import build.base.version.Version;
 import build.base.version.VersionOrder;
 import build.codemodel.foundation.CodeModel;
 import build.spin.module.modulesystem.pom.Dependency;
+import build.spin.module.modulesystem.pom.Gav;
 import build.spin.module.modulesystem.pom.Pom;
 import build.spin.module.modulesystem.pom.PomReader;
 
@@ -73,7 +74,7 @@ final class PomDependencyGraphWalker {
      */
     @FunctionalInterface
     interface CoordinateVisitor {
-        void accept(List<String> moduleNames, String groupId, String artifactId, String resolvedVersion);
+        void accept(List<String> moduleNames, Gav gav);
     }
 
     /**
@@ -121,7 +122,7 @@ final class PomDependencyGraphWalker {
 
             // Phase 1: walk the workspace poms, visit each module's own artifact, and seed the
             // dependency BFS queue with their directly declared dependencies.
-            final Deque<String[]> moduleQueue = new ArrayDeque<>();
+            final Deque<ScopedDependency> moduleQueue = new ArrayDeque<>();
 
             final List<Path> pomPaths = new ArrayList<>();
             Files.walkFileTree(workspacePath, new SimpleFileVisitor<>() {
@@ -164,11 +165,11 @@ final class PomDependencyGraphWalker {
             // and re-visited, so the last visit for a given coordinate always carries its highest
             // discovered version.
             while (!moduleQueue.isEmpty()) {
-                final String[] coord = moduleQueue.poll();
-                visitDependency(coord[0], coord[1], coord[2], localRepo, recorder, codeModel, visitor);
-                PomReader.localRepoPomPath(localRepo, coord[0], coord[1], coord[2])
+                final Gav gav = moduleQueue.poll().gav();
+                visitDependency(gav, localRepo, recorder, codeModel, visitor);
+                PomReader.localRepoPomPath(localRepo, gav)
                     .ifPresent(pomPath -> effectiveDependencyCoordinates(pomReader, pomPath).stream()
-                        .filter(d -> !"test".equals(d[3]) && !"provided".equals(d[3]))
+                        .filter(d -> !"test".equals(d.scope()) && !"provided".equals(d.scope()))
                         .forEach(d -> enqueueIfNew(d, workspaceCoordinates, visited, moduleQueue, recorder)));
             }
 
@@ -178,16 +179,22 @@ final class PomDependencyGraphWalker {
     }
 
     /**
-     * Reads a pom's effective direct dependencies via {@link PomReader} and converts them to
-     * {@code [groupId, artifactId, resolvedVersion, scope]} arrays, omitting entries whose version
-     * cannot be resolved.
+     * A resolved dependency coordinate paired with its Maven scope, as emitted by
+     * {@link #effectiveDependencyCoordinates} and carried through the BFS queue.
+     */
+    private record ScopedDependency(Gav gav, String scope) {
+    }
+
+    /**
+     * Reads a pom's effective direct dependencies via {@link PomReader} and resolves them to
+     * {@link ScopedDependency}s, omitting entries whose version cannot be resolved.
      * <p>
      * One heuristic on top of real Maven semantics: a same-groupId dependency declared with no
      * version at all (a common reactor-workspace shorthand for "the sibling at my own version")
      * defaults to this pom's own resolved version — real Maven has no such default, but this
      * codebase's workspace poms rely on it.
      */
-    private static List<String[]> effectiveDependencyCoordinates(final PomReader pomReader, final Path pomPath) {
+    private static List<ScopedDependency> effectiveDependencyCoordinates(final PomReader pomReader, final Path pomPath) {
         final Optional<Pom> pom = pomReader.read(pomPath);
         if (pom.isEmpty()) {
             return List.of();
@@ -195,7 +202,7 @@ final class PomDependencyGraphWalker {
         final String selfGroupId = pom.get().groupId();
         final String selfVersion = pom.get().version();
 
-        final List<String[]> out = new ArrayList<>();
+        final List<ScopedDependency> out = new ArrayList<>();
         for (final Dependency d : pom.get().dependencies()) {
             final String resolvedVersion = d.version()
                 .or(() -> d.groupId().equals(selfGroupId) && !selfVersion.isEmpty()
@@ -204,7 +211,7 @@ final class PomDependencyGraphWalker {
             if (resolvedVersion == null || resolvedVersion.contains("${")) {
                 continue;
             }
-            out.add(new String[]{d.groupId(), d.artifactId(), resolvedVersion, d.scope()});
+            out.add(new ScopedDependency(new Gav(d.groupId(), d.artifactId(), resolvedVersion), d.scope()));
         }
         return out;
     }
@@ -268,26 +275,27 @@ final class PomDependencyGraphWalker {
      * strictly higher version re-enqueues the coordinate so it is visited again; {@code visited} is
      * updated so a subsequent equal-or-lower encounter is still suppressed.
      */
-    private static void enqueueIfNew(final String[] coordinate,
+    private static void enqueueIfNew(final ScopedDependency dependency,
                                      final Map<String, String> workspaceCoordinates,
                                      final Map<String, String> visited,
-                                     final Deque<String[]> moduleQueue,
+                                     final Deque<ScopedDependency> moduleQueue,
                                      final TelemetryRecorder recorder) {
-        final String key = coordinate[0] + ":" + coordinate[1];
+        final Gav gav = dependency.gav();
+        final String key = gav.groupId() + ":" + gav.artifactId();
         final String workspaceVersion = workspaceCoordinates.get(key);
         if (workspaceVersion != null) {
-            if (!workspaceVersion.contains("${") && !workspaceVersion.equals(coordinate[2])) {
+            if (!workspaceVersion.contains("${") && !workspaceVersion.equals(gav.version())) {
                 recorder.warn(
                     "Dependency on workspace module [%s:%s] declares version [%s] but the module's own pom is "
                         + "at [%s] — the workspace's own version always wins; this dependency edge is not walked",
-                    coordinate[0], coordinate[1], coordinate[2], workspaceVersion);
+                    gav.groupId(), gav.artifactId(), gav.version(), workspaceVersion);
             }
             return;
         }
         final String existingVersion = visited.get(key);
-        if (existingVersion == null || isHigherVersion(coordinate[2], existingVersion)) {
-            visited.put(key, coordinate[2]);
-            moduleQueue.add(coordinate);
+        if (existingVersion == null || isHigherVersion(gav.version(), existingVersion)) {
+            visited.put(key, gav.version());
+            moduleQueue.add(dependency);
         }
     }
 
@@ -329,11 +337,10 @@ final class PomDependencyGraphWalker {
             }
 
             final Optional<String> preferred = MavenModuleNaming.readModuleName(pomPath);
-            final List<String> names = preferred.isPresent()
-                ? List.of(preferred.get())
-                : MavenModuleNaming.deriveNames(groupId, artifactId);
+            final List<String> names = preferred.map(List::of)
+                .orElseGet(() -> MavenModuleNaming.deriveNames(groupId, artifactId));
 
-            visitor.accept(names, groupId, artifactId, resolvedVersion);
+            visitor.accept(names, pom.get().gav());
         } catch (final Exception e) {
             recorder.warn(e, "PomDependencyGraphWalker failed to visit self-artifact for [%s]", pomPath);
         }
@@ -355,27 +362,22 @@ final class PomDependencyGraphWalker {
      * (e.g. {@code io.helidon.config:helidon-config-metadata} guessing its way into {@code io.helidon.confg},
      * which is really owned by {@code io.helidon.config:helidon-config}).
      */
-    private static void visitDependency(final String groupId,
-                                        final String artifactId,
-                                        final String resolvedVersion,
+    private static void visitDependency(final Gav gav,
                                         final Path localRepo,
                                         final TelemetryRecorder recorder,
                                         final CodeModel codeModel,
                                         final CoordinateVisitor visitor) {
         try {
-            final Optional<String> groundTruth = MavenModuleNaming
-                .readNamedModuleName(groupId, artifactId, resolvedVersion, localRepo, codeModel)
-                    .or(() -> MavenModuleNaming.readAutomaticModuleName(groupId, artifactId, resolvedVersion, localRepo));
-            final boolean confirmedUnnamed = groundTruth.isEmpty()
-                && MavenModuleNaming.jarExists(groupId, artifactId, resolvedVersion, localRepo);
+            final Optional<String> groundTruth = MavenModuleNaming.readNamedModuleName(gav, localRepo, codeModel)
+                    .or(() -> MavenModuleNaming.readAutomaticModuleName(gav, localRepo));
+            final boolean confirmedUnnamed = groundTruth.isEmpty() && MavenModuleNaming.jarExists(gav, localRepo);
             final List<String> names = groundTruth.map(List::of)
                 .orElseGet(() -> confirmedUnnamed
-                    ? List.of(MavenModuleNaming.derivedModuleName(artifactId))
-                    : MavenModuleNaming.deriveNames(groupId, artifactId));
-            visitor.accept(names, groupId, artifactId, resolvedVersion);
+                    ? List.of(MavenModuleNaming.derivedModuleName(gav.artifactId()))
+                    : MavenModuleNaming.deriveNames(gav.groupId(), gav.artifactId()));
+            visitor.accept(names, gav);
         } catch (final Exception e) {
-            recorder.warn(e, "PomDependencyGraphWalker failed to visit dependency [%s:%s:%s]",
-                groupId, artifactId, resolvedVersion);
+            recorder.warn(e, "PomDependencyGraphWalker failed to visit dependency [%s]", gav);
         }
     }
 }

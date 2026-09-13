@@ -34,4 +34,15 @@ public record Gav(String groupId, String artifactId, String version) {
     public GA ga() {
         return new GA(this.groupId, this.artifactId);
     }
+
+    public static Gav of(final String groupId,
+                         final String artifactId,
+                         final String version) {
+        return new Gav(groupId, artifactId, version);
+    }
+
+    public static Gav of(final GA ga,
+                         final String version) {
+        return new Gav(ga.groupId(), ga.artifactId(), version);
+    }
 }

@@ -29,13 +29,20 @@ import java.util.Set;
  * @author reed.vonredwitz
  * @since Apr-2026
  */
-public record DefaultDependency(String groupId,
-                                String artifactId,
+public record DefaultDependency(GA ga,
                                 Optional<String> version,
                                 String scope,
                                 String type,
                                 Optional<String> classifier,
                                 boolean optional,
-                                Set<String> exclusions
-) implements Dependency {
+                                Set<String> exclusions) implements Dependency {
+    @Override
+    public String groupId() {
+        return ga.groupId();
+    }
+
+    @Override
+    public String artifactId() {
+        return ga.artifactId();
+    }
 }

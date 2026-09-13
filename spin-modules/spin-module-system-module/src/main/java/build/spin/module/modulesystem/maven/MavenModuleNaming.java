@@ -22,6 +22,7 @@ package build.spin.module.modulesystem.maven;
 
 import build.codemodel.foundation.CodeModel;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
+import build.spin.module.modulesystem.pom.Gav;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -242,15 +243,9 @@ class MavenModuleNaming {
     /**
      * Returns {@code true} if the jar for the given Maven coordinates exists in the local repository.
      */
-    static boolean jarExists(final String groupId,
-                             final String artifactId,
-                             final String version,
+    static boolean jarExists(final Gav gav,
                              final Path localRepo) {
-        return Files.exists(localRepo
-            .resolve(groupId.replace('.', '/'))
-            .resolve(artifactId)
-            .resolve(version)
-            .resolve(artifactId + "-" + version + ".jar"));
+        return Files.exists(jarPath(gav, localRepo));
     }
 
     /**
@@ -260,15 +255,9 @@ class MavenModuleNaming {
      * @return the automatic module name, or empty if the jar is absent, has no manifest, or
      * carries no {@code Automatic-Module-Name} attribute
      */
-    static Optional<String> readAutomaticModuleName(final String groupId,
-                                                    final String artifactId,
-                                                    final String version,
+    static Optional<String> readAutomaticModuleName(final Gav gav,
                                                     final Path localRepo) {
-        final Path jarPath = localRepo
-            .resolve(groupId.replace('.', '/'))
-            .resolve(artifactId)
-            .resolve(version)
-            .resolve(artifactId + "-" + version + ".jar");
+        final Path jarPath = jarPath(gav, localRepo);
         if (!Files.exists(jarPath)) {
             return Optional.empty();
         }
@@ -289,21 +278,24 @@ class MavenModuleNaming {
      * computed local-repository path. Returns empty if the jar doesn't exist, has no
      * {@code module-info.class}, or cannot be read.
      */
-    static Optional<String> readNamedModuleName(final String groupId,
-                                                final String artifactId,
-                                                final String version,
+    static Optional<String> readNamedModuleName(final Gav gav,
                                                 final Path localRepo,
                                                 final CodeModel codeModel) {
-        final Path jarPath = localRepo
-            .resolve(groupId.replace('.', '/'))
-            .resolve(artifactId)
-            .resolve(version)
-            .resolve(artifactId + "-" + version + ".jar");
+        final Path jarPath = jarPath(gav, localRepo);
         if (!Files.exists(jarPath)) {
             return Optional.empty();
         }
         return JDKModuleDescriptor.extractFresh(codeModel, jarPath)
             .map(d -> d.moduleName().toString());
+    }
+
+    private static Path jarPath(final Gav gav,
+                                final Path localRepo) {
+        return localRepo
+            .resolve(gav.groupId().replace('.', '/'))
+            .resolve(gav.artifactId())
+            .resolve(gav.version())
+            .resolve(gav.artifactId() + "-" + gav.version() + ".jar");
     }
 
     /**
@@ -312,11 +304,11 @@ class MavenModuleNaming {
      * the groupId is the prefix up to the last dot ({@code build.spin.module}), and the artifactId
      * is constructed as {@code {parentLastSegment}-{extra}-{groupLastSegment}}
      * (e.g. {@code spin-clean-module}). Falls back to the plain {@code {extra}} artifactId form.
-     * Returns {@code [groupId, artifactId, version]} or empty.
+     * Returns the resolved {@link Gav}, or empty.
      */
-    static Optional<String[]> findJarByModuleName(final String moduleName,
-                                                  final String version,
-                                                  final Path localRepo) {
+    static Optional<Gav> findJarByModuleName(final String moduleName,
+                                             final String version,
+                                             final Path localRepo) {
         final int lastDot = moduleName.lastIndexOf('.');
         if (lastDot < 0) {
             return Optional.empty();
@@ -342,13 +334,8 @@ class MavenModuleNaming {
         candidates.add(extra);
 
         for (final String artifactId : candidates) {
-            final Path jarPath = localRepo
-                .resolve(groupId.replace('.', '/'))
-                .resolve(artifactId)
-                .resolve(version)
-                .resolve(artifactId + "-" + version + ".jar");
-            if (Files.exists(jarPath)) {
-                return Optional.of(new String[]{groupId, artifactId, version});
+            if (jarExists(Gav.of(groupId, artifactId, version), localRepo)) {
+                return Optional.of(Gav.of(groupId, artifactId, version));
             }
         }
 
@@ -356,13 +343,8 @@ class MavenModuleNaming {
         // have no "extra" suffix beyond the groupId at all - the module name *is* the full groupId verbatim. Retry
         // the same candidate artifactIds under the full, unstripped module name as groupId.
         for (final String artifactId : candidates) {
-            final Path jarPath = localRepo
-                .resolve(moduleName.replace('.', '/'))
-                .resolve(artifactId)
-                .resolve(version)
-                .resolve(artifactId + "-" + version + ".jar");
-            if (Files.exists(jarPath)) {
-                return Optional.of(new String[]{moduleName, artifactId, version});
+            if (jarExists(Gav.of(moduleName, artifactId, version), localRepo)) {
+                return Optional.of(Gav.of(moduleName, artifactId, version));
             }
         }
         return Optional.empty();

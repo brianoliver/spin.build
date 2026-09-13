@@ -110,9 +110,9 @@ public class PomBasedModuleVersioning
         final Map<String, Version> versions = new LinkedHashMap<>();
 
         PomDependencyGraphWalker.walk(workspacePath, localRepo, recorder, codeModel, isIgnored,
-            (names, groupId, artifactId, rawVersion) -> {
+            (names, gav) -> {
                 try {
-                    final Version version = Version.parse(rawVersion);
+                    final Version version = Version.parse(gav.version());
                     // keep the highest version registered for a name, not merely the first one
                     // visited: the walker can (and, for a name reachable via more than one
                     // transitive path, does) invoke this visitor more than once for the same name at
@@ -123,7 +123,7 @@ public class PomBasedModuleVersioning
                             ? incoming : existing));
                 } catch (final Exception e) {
                     recorder.warn(e, "PomBasedModuleVersioning failed to parse version [%s] for [%s:%s]",
-                        rawVersion, groupId, artifactId);
+                        gav.version(), gav.groupId(), gav.artifactId());
                 }
             });
 
