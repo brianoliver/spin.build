@@ -68,8 +68,8 @@
         <maven.version>3.9.16</maven.version>
 
         <!-- Module Dependency Versions -->
-        <base.version>0.30.2</base.version>
-        <codemodel.version>0.27.1</codemodel.version>
+        <base.version>0.31.0</base.version>
+        <codemodel.version>0.28.0</codemodel.version>
         <checkstyle.version>13.9.0</checkstyle.version>
         <assertj.version>3.27.7</assertj.version>
         <jackson.version>2.21.2</jackson.version>
@@ -77,8 +77,8 @@
         <jakarta.inject.version>2.0.1</jakarta.inject.version>
         <junit.version>6.0.3</junit.version>
         <mockito.version>5.23.0</mockito.version>
-        <percolate.version>0.1.1</percolate.version>
-        <spawn.version>0.4.1</spawn.version>
+        <percolate.version>0.2.2</percolate.version>
+        <spawn.version>0.4.2</spawn.version>
 
         <!-- Plugin Dependency Versions -->
         <maven-assembly-plugin.version>3.8.0</maven-assembly-plugin.version>
