@@ -179,13 +179,17 @@ public class JavaPlatform
     /**
      * Among {@code candidates} (ordered best-first, as {@link #stream()} yields them), prefers the
      * entry whose home matches the {@code JAVA_HOME} environment variable over the nominal best
-     * (first) entry — but only among entries tied on {@link JDKVersion} with that first entry, i.e.
-     * only to break a tie the underlying comparator otherwise resolves arbitrarily.
+     * (first) entry — but only among entries sharing the same {@link JDKVersion#major() major
+     * version} as that first entry, i.e. only to break a same-major ambiguity the underlying
+     * comparator otherwise resolves arbitrarily.
      * <p>
-     * Without this, two equally-versioned {@link JDK}s (e.g. a CI runner's preinstalled JDK and the
-     * one the build was actually configured to use via {@code JAVA_HOME}) are ordered solely by an
-     * incidental string comparison of their install paths, which can silently select the wrong one
-     * depending on whatever else happens to be installed on the host.
+     * Without this, two same-major {@link JDK}s (e.g. a CI runner's preinstalled JDK and the one
+     * the build was actually configured to use via {@code JAVA_HOME}) are ordered solely by version
+     * comparison and, failing that, an incidental string comparison of their install paths — which
+     * can silently select the wrong one depending on whatever else happens to be installed on the
+     * host, even when the two differ only in patch/build number (e.g. a CI runner's Temurin
+     * 25.0.4.1, which ships without a {@code jmods/} directory, outranking the Zulu 25.0.4 actually
+     * staged via {@code JAVA_HOME}, which does).
      *
      * @param candidates the candidate {@link JDK}s, ordered best-first
      * @return the preferred {@link JDK}, if any
@@ -212,9 +216,9 @@ public class JavaPlatform
 
         if (javaHome != null) {
             final Path javaHomePath = Path.of(javaHome).normalize();
-            final JDKVersion bestVersion = ordered.getFirst().version();
+            final int bestMajor = ordered.getFirst().version().major();
             for (final var jdk : ordered) {
-                if (!jdk.version().equals(bestVersion)) {
+                if (jdk.version().major() != bestMajor) {
                     break;
                 }
                 if (jdk.home().path().normalize().equals(javaHomePath)) {

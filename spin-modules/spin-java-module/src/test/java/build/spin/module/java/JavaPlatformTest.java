@@ -136,6 +136,21 @@ class JavaPlatformTest {
     }
 
     @Test
+    void preferJavaHome_prefersTheJavaHomeMatchAcrossDifferingPatchVersionsOfTheSameMajor() {
+        // real, reported CI failure: a runner had a Temurin 25.0.4.1 (no jmods/ directory) ranked
+        // ahead of the Zulu 25.0.4 actually staged via JAVA_HOME, purely because .4.1 outranks .4
+        // as a JDKVersion -- the two were never a literal tie, so the tie-break above never kicked
+        // in, and the higher-patch-but-wrong JDK won every time
+        final var temurin = jdk("25.0.4.1", OperatingSystem.LINUX, Architecture.X86_64,
+            "/opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/25.0.4-1/x64");
+        final var zulu = jdk("25.0.4", OperatingSystem.LINUX, Architecture.X86_64,
+            "/opt/hostedtoolcache/Java_Zulu_jdk/25.0.4-7/x64");
+
+        assertThat(JavaPlatform.preferJavaHome(Stream.of(temurin, zulu), zulu.home().path().toString()))
+            .contains(zulu);
+    }
+
+    @Test
     void preferJavaHome_ignoresJavaHomeWhenItDoesNotMatchTheBestVersion() {
         final var older = jdk("21.0.1", OperatingSystem.LINUX, Architecture.X86_64, "/opt/hostedtoolcache/old");
         final var newer = jdk("25.0.4", OperatingSystem.LINUX, Architecture.X86_64, "/opt/hostedtoolcache/new");
