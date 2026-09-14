@@ -40,10 +40,12 @@ import build.spin.common.JDKTools;
 import build.spin.common.ProcessFailedException;
 import build.spin.common.ProcessRunner;
 import build.spin.common.task.SourcePathKind;
+import build.spin.module.configuration.Source;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleReference;
 import build.spin.option.JlinkTargets;
 import jakarta.inject.Inject;
+import jakarta.inject.Named;
 
 import java.io.BufferedOutputStream;
 import java.io.File;
@@ -79,11 +81,26 @@ import java.util.zip.ZipOutputStream;
  * @author brian.oliver
  * @since Jan-2023
  */
+@Source(AbstractJavaLinker.CONFIGURATION_SOURCE)
 public abstract class AbstractJavaLinker
     implements Task<Set<Path>> {
 
+    static final String CONFIGURATION_SOURCE = "build.spin.module.jlink";
+
+    private static final String MAIN_CLASS_KEY = "main-class";
+
     @Inject
     private TelemetryRecorder recorder;
+
+    @Inject
+    @build.spin.module.configuration.Configuration
+    @Named("enable-native-access")
+    private Optional<String> enableNativeAccess;
+
+    @Inject
+    @build.spin.module.configuration.Configuration
+    @Named(MAIN_CLASS_KEY)
+    private Optional<String> mainClassOverride;
 
     @Inject
     private JavaPlatform platform;
@@ -122,7 +139,7 @@ public abstract class AbstractJavaLinker
         throws Exception {
 
         // jlink only makes sense for executable applications. Skip silently for library modules.
-        final Optional<String> mainClass = detectMainClass(this.project.path(), this.recorder);
+        final Optional<String> mainClass = detectMainClass(this.project.path(), this.mainClassOverride, this.recorder);
         if (mainClass.isEmpty()) {
             this.recorder.diagnostic("Skipping jlink for [%s]: no main class found", this.project.path());
             return Set.of();
@@ -417,7 +434,7 @@ public abstract class AbstractJavaLinker
             }
 
             if (isHostTarget) {
-                dumpBaseCdsArchive(packagePath, rootModule, mainClass, modulePath, classPathTargets);
+                dumpBaseCdsArchive(packagePath, rootModule, mainClass, modulePath, classPathTargets, this.enableNativeAccess);
             }
 
             // ---------
@@ -433,7 +450,7 @@ public abstract class AbstractJavaLinker
                 .collect(Collectors.joining(":"));
 
             try (var writer = Files.newBufferedWriter(scriptPath.resolve(scriptName))) {
-                new ScriptTemplate(classPath, !tainted.isEmpty(), rootModule, mainClass, packageName)
+                new ScriptTemplate(classPath, !tainted.isEmpty(), rootModule, mainClass, packageName, this.enableNativeAccess.orElse(null))
                     .render(new TextOut(writer));
             }
 
@@ -596,7 +613,8 @@ public abstract class AbstractJavaLinker
                                     final String rootModule,
                                     final String mainClass,
                                     final Path modulePath,
-                                    final List<Path> classPathTargets) {
+                                    final List<Path> classPathTargets,
+                                    final Optional<String> enableNativeAccess) {
         final var recordingObserver = new RecordingSubscriber<String>();
         final ErrorCapture captured = new ErrorCapture();
 
@@ -605,6 +623,7 @@ public abstract class AbstractJavaLinker
             .add(Name.of("java"))
             .add(Argument.of("--enable-preview"))
             .add(Argument.of("-Xshare:dump"));
+        enableNativeAccess.ifPresent(modules -> configuration.add(Argument.of("--enable-native-access=" + modules)));
         if (Files.isDirectory(modulePath)) {
             configuration.add(Argument.of("--module-path"));
             configuration.add(Argument.of(modulePath.toString()));
@@ -695,23 +714,51 @@ public abstract class AbstractJavaLinker
         }
     }
 
-    private static Optional<String> detectMainClass(final Path projectPath,
+    // Package-private (rather than private) so tests can exercise the override-validation and
+    // multiple-candidate cases directly, without going through jlink()'s full DI-injected path.
+    static Optional<String> detectMainClass(final Path projectPath,
+                                                    final Optional<String> mainClassOverride,
                                                     final TelemetryRecorder recorder) {
         final Path srcDir = projectPath.resolve(SourcePathKind.MAIN.sourceRoot().orElseThrow() + "java");
+        if (mainClassOverride.isPresent()) {
+            final String override = mainClassOverride.get();
+            final Path expected = srcDir.resolve(override.replace('.', '/') + ".java");
+            if (!Files.isRegularFile(expected)) {
+                throw new RuntimeException(("Configured '%s' value [%s] does not exist: no source file at [%s] "
+                    + "-- check %s")
+                    .formatted(MAIN_CLASS_KEY, override, expected, configurationLocation()));
+            }
+            return mainClassOverride;
+        }
         if (!Files.isDirectory(srcDir)) {
             return Optional.empty();
         }
         try (var walk = Files.walk(srcDir)) {
-            return walk
+            final List<String> candidates = walk
                 .filter(p -> p.toString().endsWith(".java"))
                 .filter(p -> !p.getFileName().toString().equals("module-info.java"))
                 .filter(AbstractJavaLinker::hasMainMethod)
                 .map(p -> toClassName(p, srcDir))
-                .peek(name -> recorder.diagnostic("auto-detected main class: %s", name))
-                .findFirst();
+                .toList();
+            if (candidates.size() > 1) {
+                throw new RuntimeException(("Multiple candidate main classes found in [%s]: %s "
+                    + "-- set '%s' in %s to disambiguate")
+                    .formatted(srcDir, candidates, MAIN_CLASS_KEY, configurationLocation()));
+            }
+            candidates.forEach(name -> recorder.diagnostic("auto-detected main class: %s", name));
+            return candidates.stream().findFirst();
         } catch (final IOException e) {
             return Optional.empty();
         }
+    }
+
+    // human-readable pointer to where jlink's own configuration lives, e.g.
+    // ".spin/build.spin.module.jlink.properties" -- built from the same constants that back the
+    // @Source/@Configuration/@Named wiring above so it can't describe a path that doesn't match
+    // what ConfigurationResolver actually looks up.
+    private static String configurationLocation() {
+        return "%s/%s.properties"
+            .formatted(build.spin.module.configuration.Configuration.DIRECTORY, CONFIGURATION_SOURCE);
     }
 
     private static boolean hasMainMethod(final Path javaFile) {

@@ -40,6 +40,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
@@ -48,6 +49,7 @@ import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class AbstractJavaLinkerTest {
 
@@ -377,6 +379,81 @@ class AbstractJavaLinkerTest {
         final var jar = buildJar("org/example/Foo.class", "com/foo/Bar.class");
         assertThat(AbstractJavaLinker.stripForeignNatives(jar, "Linux", "x86_64")).isFalse();
         assertThat(jarEntryNames(jar)).containsExactlyInAnyOrder("org/example/Foo.class", "com/foo/Bar.class");
+    }
+
+    // --- detectMainClass ---
+
+    private void writeSource(final Path srcDir, final String relativeJavaPath, final String content)
+        throws IOException {
+        final Path file = srcDir.resolve(relativeJavaPath);
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, content);
+    }
+
+    @Test
+    void detectMainClass_returnsEmptyWhenNoSourceDirectory() {
+        final Path projectPath = this.tempDir.resolve("no-src");
+        assertThat(AbstractJavaLinker.detectMainClass(projectPath, Optional.empty(), noopRecorder()))
+            .isEmpty();
+    }
+
+    @Test
+    void detectMainClass_findsSingleCandidate() throws IOException {
+        final Path projectPath = Files.createDirectory(this.tempDir.resolve("single-candidate"));
+        final Path srcDir = projectPath.resolve("src/main/java");
+        writeSource(srcDir, "com/example/App.java",
+            "package com.example; class App { static void main(String[] a) {} }");
+
+        assertThat(AbstractJavaLinker.detectMainClass(projectPath, Optional.empty(), noopRecorder()))
+            .contains("com.example.App");
+    }
+
+    @Test
+    void detectMainClass_throwsWhenMultipleCandidatesFound() throws IOException {
+        final Path projectPath = Files.createDirectory(this.tempDir.resolve("multi-candidate"));
+        final Path srcDir = projectPath.resolve("src/main/java");
+        writeSource(srcDir, "com/example/AppOne.java",
+            "package com.example; class AppOne { static void main(String[] a) {} }");
+        writeSource(srcDir, "com/example/AppTwo.java",
+            "package com.example; class AppTwo { static void main(String[] a) {} }");
+
+        assertThatThrownBy(() ->
+            AbstractJavaLinker.detectMainClass(projectPath, Optional.empty(), noopRecorder()))
+            .isInstanceOf(RuntimeException.class)
+            .hasMessageContaining("com.example.AppOne")
+            .hasMessageContaining("com.example.AppTwo")
+            .hasMessageContaining("main-class")
+            .hasMessageContaining(".spin/build.spin.module.jlink.properties");
+    }
+
+    @Test
+    void detectMainClass_returnsOverrideWhenSourceFileExists() throws IOException {
+        final Path projectPath = Files.createDirectory(this.tempDir.resolve("override-exists"));
+        final Path srcDir = projectPath.resolve("src/main/java");
+        // the override is trusted outright -- it need not itself contain a main method, unlike
+        // the auto-detected path, since the user has explicitly named it
+        writeSource(srcDir, "com/example/Launcher.java", "package com.example; class Launcher {}");
+
+        assertThat(AbstractJavaLinker.detectMainClass(
+            projectPath, Optional.of("com.example.Launcher"), noopRecorder()))
+            .contains("com.example.Launcher");
+    }
+
+    @Test
+    void detectMainClass_throwsWhenOverrideSourceFileMissing() throws IOException {
+        final Path projectPath = Files.createDirectory(this.tempDir.resolve("override-missing"));
+        Files.createDirectories(projectPath.resolve("src/main/java"));
+
+        assertThatThrownBy(() -> AbstractJavaLinker.detectMainClass(
+            projectPath, Optional.of("com.example.DoesNotExist"), noopRecorder()))
+            .isInstanceOf(RuntimeException.class)
+            .hasMessageContaining("com.example.DoesNotExist")
+            .hasMessageContaining("main-class")
+            .hasMessageContaining(".spin/build.spin.module.jlink.properties");
+    }
+
+    private static TelemetryRecorder noopRecorder() {
+        return capturingRecorder(new ArrayList<>());
     }
 
     // --- classifyCached ---
