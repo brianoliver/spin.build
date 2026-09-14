@@ -347,13 +347,8 @@ final class PomDependencyGraphWalker {
     }
 
     /**
-     * Visits a dependency coordinate, registering it under the ground-truth JPMS module name when
-     * one can be read directly from the jar ({@code module-info.class}, then {@code Automatic-Module-Name});
-     * otherwise falls back to the single JPMS-spec-derived automatic module name when the jar is
-     * present locally but confirmed to carry neither (it's then definitely an automatic module,
-     * which the JDK always names purely from the jar filename, never group-prefixed), or to the
-     * full {@link MavenModuleNaming#deriveNames} heuristic set when the jar isn't resolved yet and
-     * its eventual naming can't be determined.
+     * Visits a dependency coordinate, registering it under the name(s) produced by
+     * {@link MavenModuleNaming#requiresNamesFor(Gav, Path, CodeModel)}.
      * <p>
      * The ground truth is preferred exclusively (not additively) because heuristic names are derived from the
      * groupId/artifactId shared by every sibling artifact under that groupId (e.g. every {@code io.helidon.config:*}
@@ -368,13 +363,7 @@ final class PomDependencyGraphWalker {
                                         final CodeModel codeModel,
                                         final CoordinateVisitor visitor) {
         try {
-            final Optional<String> groundTruth = MavenModuleNaming.readNamedModuleName(gav, localRepo, codeModel)
-                    .or(() -> MavenModuleNaming.readAutomaticModuleName(gav, localRepo));
-            final boolean confirmedUnnamed = groundTruth.isEmpty() && MavenModuleNaming.jarExists(gav, localRepo);
-            final List<String> names = groundTruth.map(List::of)
-                .orElseGet(() -> confirmedUnnamed
-                    ? List.of(MavenModuleNaming.derivedModuleName(gav.artifactId()))
-                    : MavenModuleNaming.deriveNames(gav.groupId(), gav.artifactId()));
+            final var names = MavenModuleNaming.requiresNamesFor(gav, localRepo, codeModel);
             visitor.accept(names, gav);
         } catch (final Exception e) {
             recorder.warn(e, "PomDependencyGraphWalker failed to visit dependency [%s]", gav);

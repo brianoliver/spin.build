@@ -64,6 +64,9 @@ public class PomBasedTestModuleDescriptor
     @Inject
     private ProjectPom projectPom;
 
+    @Inject
+    private LocalMavenRepository localMavenRepository;
+
     @Override
     public JDKModuleDescriptor get(final Project project) {
         final String name = project.name().replace("-", ".");
@@ -98,12 +101,9 @@ public class PomBasedTestModuleDescriptor
                     continue;
                 }
 
-                // this synthetic descriptor has no jar to read a ground-truth module name from,
-                // so every naming-convention candidate must be tried — MavenModuleNaming.deriveNames
-                // is the single canonical set of those, shared with PomDependencyGraphWalker.
-                for (final String candidate : MavenModuleNaming.deriveNames(dep.groupId(), dep.artifactId())) {
-                    final ModuleName moduleName =
-                        this.codeModel.getNameProvider().getModuleName(candidate).orElseThrow();
+                // see MavenModuleNaming.requiresNamesFor for the ground-truth-vs-heuristic naming rules
+                for (final String candidate : MavenModuleNaming.requiresNamesFor(dep.ga(), dep.version(), this.localMavenRepository.path(), this.codeModel)) {
+                    final ModuleName moduleName = this.codeModel.getNameProvider().getModuleName(candidate).orElseThrow();
                     descriptor.addTrait(RequiresModuleDescriptor.of(this.codeModel, moduleName));
                 }
             }
