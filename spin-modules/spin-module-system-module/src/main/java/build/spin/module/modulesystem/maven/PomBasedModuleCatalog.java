@@ -142,7 +142,7 @@ public class PomBasedModuleCatalog
         }
         // Fallback: infer groupId/artifactId from the module name convention and probe the local repo.
         final String version = reference.version().get().toString();
-        return MavenModuleNaming.findJarByModuleName(reference.name(), version, this.localRepo)
+        return MavenModuleNaming.findJarByModuleName(reference.name(), version, this.localRepo, this.codeModel)
             .map(gav -> {
                 final Artifact artifact = Artifact.create(gav.groupId(), gav.artifactId(), gav.version(), "jar");
                 final Artifact.Constraint constraint = Artifact.Constraint.of(artifact);

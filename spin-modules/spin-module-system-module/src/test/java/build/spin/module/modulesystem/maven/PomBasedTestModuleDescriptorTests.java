@@ -55,8 +55,8 @@ class PomBasedTestModuleDescriptorTests {
 
     /**
      * These tests derive {@code requires} purely from the pom's {@code <dependency>} coordinates via
-     * naming conventions, so the local repository is never actually read — an empty temp directory
-     * stands in for it.
+     * naming conventions — an empty temp directory stands in for the local repository, so it is
+     * checked but never has a jar to actually read a ground-truth module name from.
      */
     @TempDir
     private Path localRepo;
@@ -223,6 +223,7 @@ class PomBasedTestModuleDescriptorTests {
         inject(descriptor, "recorder", RECORDER);
         inject(descriptor, "codeModel", CODE_MODEL);
         inject(descriptor, "projectPom", projectPom);
+        inject(descriptor, "localMavenRepository", LocalMavenRepository.of(this.localRepo));
 
         final JDKModuleDescriptor result = descriptor.get(project);
         return result.requiresClauses()

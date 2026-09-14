@@ -22,6 +22,7 @@ package build.spin.module.modulesystem.maven;
 
 import build.codemodel.foundation.CodeModel;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
+import build.spin.module.modulesystem.pom.GA;
 import build.spin.module.modulesystem.pom.Gav;
 
 import java.nio.file.Files;
@@ -200,6 +201,50 @@ class MavenModuleNaming {
         return names;
     }
 
+    /**
+     * The JPMS module name(s) to synthesise a {@code requires} against for a Maven coordinate.
+     * <p>
+     * Prefers the ground-truth name read straight from the resolved jar ({@code module-info.class},
+     * then {@code Automatic-Module-Name}) — a single, exact name — and only falls back to the full
+     * {@link #deriveNames} naming-convention guess set when the jar can't be located or read (no
+     * resolvable version yet, or not yet downloaded). A jar that is present but carries neither is a
+     * genuine automatic module, named by the JDK purely from its filename (never group-prefixed).
+     * <p>
+     * Shared by {@link PomDependencyGraphWalker}'s own {@code visitDependency} and
+     * {@link PomBasedTestModuleDescriptor}, so a synthesised {@code requires} lands on exactly the
+     * name {@link PomBasedModuleCatalog}/{@link PomBasedModuleVersioning} registered the coordinate
+     * under — a groupId/artifactId guess (e.g. {@code com.google.guava}/{@code guava}) that doesn't
+     * match the real automatic module name ({@code com.google.common}) otherwise never resolves and
+     * the dependency silently drops.
+     */
+    static List<String> requiresNamesFor(final GA ga,
+                                         final Optional<String> version,
+                                         final Path localRepo,
+                                         final CodeModel codeModel) {
+        if (version.isEmpty()) {
+            return deriveNames(ga.groupId(), ga.artifactId());
+        }
+        return requiresNamesFor(Gav.of(ga, version.get()), localRepo, codeModel);
+    }
+
+    /**
+     * As {@link #requiresNamesFor(GA, Optional, Path, CodeModel)}, for a coordinate whose version is
+     * already resolved.
+     */
+    static List<String> requiresNamesFor(final Gav gav,
+                                         final Path localRepo,
+                                         final CodeModel codeModel) {
+        final Optional<String> groundTruth = readNamedModuleName(gav, localRepo, codeModel)
+                .or(() -> readAutomaticModuleName(gav, localRepo));
+        if (groundTruth.isPresent()) {
+            return List.of(groundTruth.get());
+        }
+        if (jarExists(gav, localRepo)) {
+            return List.of(derivedModuleName(gav.artifactId()));
+        }
+        return deriveNames(gav.groupId(), gav.artifactId());
+    }
+
     private static boolean groupIdContainsSegment(final String groupId, final String segment) {
         int start = 0;
         while (start < groupId.length()) {
@@ -304,11 +349,18 @@ class MavenModuleNaming {
      * the groupId is the prefix up to the last dot ({@code build.spin.module}), and the artifactId
      * is constructed as {@code {parentLastSegment}-{extra}-{groupLastSegment}}
      * (e.g. {@code spin-clean-module}). Falls back to the plain {@code {extra}} artifactId form.
+     * <p>
+     * Each candidate coordinate is the mirror image of {@link #requiresNamesFor}: rather than
+     * accepting the first coordinate whose guessed path happens to exist, a candidate is only
+     * accepted once {@link #requiresNamesFor(Gav, Path, CodeModel)} on that coordinate is read back
+     * and confirmed to actually resolve to {@code moduleName} — otherwise a coincidentally-existing
+     * jar under a plausible-looking but wrong coordinate would be silently substituted.
      * Returns the resolved {@link Gav}, or empty.
      */
     static Optional<Gav> findJarByModuleName(final String moduleName,
                                              final String version,
-                                             final Path localRepo) {
+                                             final Path localRepo,
+                                             final CodeModel codeModel) {
         final int lastDot = moduleName.lastIndexOf('.');
         if (lastDot < 0) {
             return Optional.empty();
@@ -334,8 +386,9 @@ class MavenModuleNaming {
         candidates.add(extra);
 
         for (final String artifactId : candidates) {
-            if (jarExists(Gav.of(groupId, artifactId, version), localRepo)) {
-                return Optional.of(Gav.of(groupId, artifactId, version));
+            final Gav candidate = Gav.of(groupId, artifactId, version);
+            if (matchesModuleName(candidate, localRepo, codeModel, moduleName)) {
+                return Optional.of(candidate);
             }
         }
 
@@ -343,10 +396,24 @@ class MavenModuleNaming {
         // have no "extra" suffix beyond the groupId at all - the module name *is* the full groupId verbatim. Retry
         // the same candidate artifactIds under the full, unstripped module name as groupId.
         for (final String artifactId : candidates) {
-            if (jarExists(Gav.of(moduleName, artifactId, version), localRepo)) {
-                return Optional.of(Gav.of(moduleName, artifactId, version));
+            final Gav candidate = Gav.of(moduleName, artifactId, version);
+            if (matchesModuleName(candidate, localRepo, codeModel, moduleName)) {
+                return Optional.of(candidate);
             }
         }
         return Optional.empty();
+    }
+
+    /**
+     * {@code true} if a jar exists at {@code candidate} and {@link #requiresNamesFor} confirms
+     * (via {@code module-info.class}, {@code Automatic-Module-Name}, or plain filename derivation)
+     * that it is actually named {@code moduleName} — never on coordinate existence alone.
+     */
+    private static boolean matchesModuleName(final Gav candidate,
+                                             final Path localRepo,
+                                             final CodeModel codeModel,
+                                             final String moduleName) {
+        return jarExists(candidate, localRepo)
+            && requiresNamesFor(candidate, localRepo, codeModel).equals(List.of(moduleName));
     }
 }
