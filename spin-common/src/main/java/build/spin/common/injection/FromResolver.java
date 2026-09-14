@@ -27,6 +27,7 @@ import build.codemodel.dependency.injection.Dependency;
 import build.codemodel.dependency.injection.InjectionPoint;
 import build.codemodel.dependency.injection.InjectionPointDependency;
 import build.codemodel.dependency.injection.Resolver;
+import build.codemodel.dependency.injection.UnsatisfiedDependencyException;
 import build.codemodel.dependency.injection.ValueBinding;
 import build.codemodel.foundation.usage.AnnotationTypeUsage;
 import build.codemodel.jdk.TypeUsages;
@@ -315,14 +316,18 @@ public class FromResolver
             this.recorder.fatal(
                 "The @Merge annotated Task [%s] does not declare a public static merge(Stream<T>) method.",
                 Introspection.describe(fromClass));
-            return Optional.empty();
+            throw new UnsatisfiedDependencyException(dependency,
+                "The @Merge annotated Task " + Introspection.describe(fromClass)
+                    + " does not declare a public static merge(Stream<T>) method.");
         }
 
         if (!Modifier.isStatic(mergeMethod.getModifiers())) {
             this.recorder.fatal(
                 "The @Merge annotated Task [%s] does not declare a public static merge(Stream<T>) method.",
                 Introspection.describe(fromClass));
-            return Optional.empty();
+            throw new UnsatisfiedDependencyException(dependency,
+                "The @Merge annotated Task " + Introspection.describe(fromClass)
+                    + " does not declare a public static merge(Stream<T>) method.");
         }
 
         final List<Object> results = this.instruction.dependencies()
@@ -340,7 +345,8 @@ public class FromResolver
             merged = mergeMethod.invoke(null, results.stream());
         } catch (final ReflectiveOperationException e) {
             this.recorder.fatal(e, "Failed to invoke merge(Stream<T>) declared by [%s].", Introspection.describe(fromClass));
-            return Optional.empty();
+            throw new UnsatisfiedDependencyException(dependency,
+                "Failed to invoke merge(Stream<T>) declared by " + Introspection.describe(fromClass) + ".", e);
         }
 
         if (!requiredClass.isInstance(merged)) {
@@ -349,7 +355,10 @@ public class FromResolver
                 Introspection.describe(requiredClass),
                 Introspection.describe(fromClass),
                 dependency.typeUsage());
-            return Optional.empty();
+            throw new UnsatisfiedDependencyException(dependency,
+                "The type " + Introspection.describe(requiredClass) + " produced by merging "
+                    + Introspection.describe(fromClass) + " is not assignable or convertable to "
+                    + dependency.typeUsage() + ".");
         }
 
         return Optional.of(binding(dependency, merged));
