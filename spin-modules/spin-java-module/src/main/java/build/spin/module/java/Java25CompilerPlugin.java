@@ -196,6 +196,24 @@ public class Java25CompilerPlugin
     }
 
     /**
+     * A {@link Task} to run a {@link Project}'s own compiled application directly.
+     */
+    @Named("exec")
+    @Description("Run the project's application")
+    @Category("run")
+    public static class Exec
+        extends AbstractJavaExec {
+
+        @Override
+        public Void exec(final @From(DetectCompilationResolution.class) CompilationResolution resolution,
+                         final @From(Compile.class) PathSet compiledClasses)
+            throws Exception {
+
+            return super.exec(resolution, compiledClasses);
+        }
+    }
+
+    /**
      * A {@link Task} to perform Java Linking on a {@link Project}.
      */
     @Named("jlink")

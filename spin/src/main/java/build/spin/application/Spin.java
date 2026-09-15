@@ -135,7 +135,8 @@ public class Spin {
             Java25CompilerPlugin.JavaDoc.class,
             CheckstylePlugin.Checkstyle.class,
             Java25CompilerPlugin.JavaLinker.class,
-            Java25CompilerPlugin.JavaDependencyAnalysis.class
+            Java25CompilerPlugin.JavaDependencyAnalysis.class,
+            Java25CompilerPlugin.Exec.class
         );
 
         final LinkedHashSet<String> registeredTaskNames = new LinkedHashSet<>();

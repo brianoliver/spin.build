@@ -102,6 +102,38 @@ class SpinRuntimeIntegrationTests {
     }
 
     @Test
+    void execShouldRunTheProjectsOwnMainClassDirectly() throws Exception {
+        // Regression coverage for AbstractJavaExec: `spin exec` should compile the project, resolve
+        // its dependency module-path/classpath via the same CompilationResolution Compile/JavaDoc
+        // already use (no jdeps fork), and fork `java --module-path ... -m app/app.Main` with its
+        // console inherited so the application's own stdout reaches spin's.
+        //
+        // Reuses the jlink-jdk-module fixture as-is -- it already has a real module-info.java (module
+        // "app") and an app.Main with a main() that prints "hello world", exactly what exec needs, so
+        // there's no reason to hand-write a second near-identical fixture just for this.
+
+        final Path spinSh = spinHome().resolve("bin/spin.sh");
+        assertThat(spinSh)
+            .as("expected a self-hosted spin runtime at [%s] -- run `./mvnw install` from the "
+                + "repo root first so spin's own jlink image exists", spinSh)
+            .isRegularFile();
+
+        final Path fixture = copyFixture("jlink-jdk-module");
+
+        final Process spin = new ProcessBuilder(spinSh.toString(), "exec")
+            .directory(fixture.toFile())
+            .redirectErrorStream(true)
+            .start();
+        final String output = new String(spin.getInputStream().readAllBytes());
+        final int exitCode = spin.waitFor();
+
+        assertThat(exitCode).as("spin.sh exec failed:%n%s", output).isZero();
+        assertThat(output)
+            .as("expected app.Main's own stdout to reach spin's console live:%n%s", output)
+            .contains("hello world");
+    }
+
+    @Test
     void jlinkRunningSpinShouldCompileAModuleInfoLessCustomizationAgainstItsOwnImage() throws Exception {
         // Regression coverage for CustomizationPlugin.spinRuntimeImage(): when spin is running from
         // its own trimmed jlink image, every spin module resolves to a jrt: location and cannot go
