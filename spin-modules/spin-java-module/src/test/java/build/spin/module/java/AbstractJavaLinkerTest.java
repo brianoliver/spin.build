@@ -22,6 +22,7 @@ package build.spin.module.java;
 
 import build.base.foundation.UniformResource;
 import build.base.telemetry.TelemetryRecorder;
+import build.base.template.TextOut;
 import build.spawn.jdk.Architecture;
 import build.spawn.jdk.OperatingSystem;
 import build.spin.common.telemetry.TelemetryPublisher;
@@ -454,6 +455,17 @@ class AbstractJavaLinkerTest {
 
     private static TelemetryRecorder noopRecorder() {
         return capturingRecorder(new ArrayList<>());
+    }
+
+    // --- ScriptTemplate ---
+
+    @Test
+    void scriptTemplate_execsPlainJavaWhenProcessNameNotConfigured() {
+        final var out = new TextOut();
+        new ScriptTemplate("", false, "build.example", "build.example.Main", "example", null)
+            .render(out);
+
+        assertThat(out.toString()).contains("exec $SCRIPTPATH/java ");
     }
 
     // --- classifyCached ---
