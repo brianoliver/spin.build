@@ -102,6 +102,11 @@ public abstract class AbstractJavaLinker
     private Optional<String> mainClassOverride;
 
     @Inject
+    @build.spin.module.configuration.Configuration
+    @Named("process-name")
+    private Optional<String> processName;
+
+    @Inject
     private JavaPlatform platform;
 
     @Inject
@@ -440,6 +445,26 @@ public abstract class AbstractJavaLinker
             // create the script to execute the application
             final var scriptPath = packagePath.resolve("bin");
 
+            // A process's displayed name (`ps -eo comm`, `top`) comes from the basename of the
+            // executable file the kernel actually exec'd -- not from argv[0] -- so renaming via
+            // the shell's `exec -a name` (a bash-only extension /bin/sh's dash doesn't support
+            // anyway) wouldn't work even if it were portable. The only way to change it is to
+            // exec a file that is itself named processName, so make a real copy of the freshly
+            // linked java binary under that name; ScriptTemplate.jt execs it directly instead of
+            // "java" when configured.
+            if (this.processName.isPresent()) {
+                final var name = this.processName.get();
+                final var javaExecutable = scriptPath.resolve("java");
+                if (!Files.isRegularFile(javaExecutable)) {
+                    throw new IllegalStateException(
+                        "expected jlink to have produced [" + javaExecutable + "] to copy as the '"
+                            + name + "' process-name executable, but it does not exist");
+                }
+                final var renamedExecutable = scriptPath.resolve(name);
+                Files.copy(javaExecutable, renamedExecutable, StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.COPY_ATTRIBUTES);
+            }
+
             // The script template references $MP (modules/) and $LIB (classpath/). Only the
             // classpath entries are listed explicitly; the module-path is a single directory.
             // $MP (and the --module-path argument itself) is only emitted when tainted jars
@@ -449,7 +474,8 @@ public abstract class AbstractJavaLinker
                 .collect(Collectors.joining(":"));
 
             try (var writer = Files.newBufferedWriter(scriptPath.resolve(scriptName))) {
-                new ScriptTemplate(classPath, !tainted.isEmpty(), rootModule, mainClass, packageName, this.enableNativeAccess.orElse(null))
+                new ScriptTemplate(classPath, !tainted.isEmpty(), rootModule, mainClass, packageName,
+                    this.enableNativeAccess.orElse(null), this.processName.orElse(null))
                     .render(new TextOut(writer));
             }
 
