@@ -13,5 +13,5 @@ MP=`readlink -f "$SCRIPTPATH/../modules"`
 @}
 CDS=`readlink -f "$SCRIPTPATH/.."`/app.jsa
 
-$SCRIPTPATH/java --enable-preview -XX:+AutoCreateSharedArchive -XX:SharedArchiveFile=$CDS -Xlog:cds=error#{enableNativeAccess != null && !enableNativeAccess.isEmpty() ? " --enable-native-access=" + enableNativeAccess : ""}#{hasModulePath ? " --module-path $MP" : ""}#{classpath != null && !classpath.isEmpty() ? " -cp " + classpath : ""} -m #{rootModule}/#{mainClass} $@
+exec $SCRIPTPATH/java --enable-preview -XX:+AutoCreateSharedArchive -XX:SharedArchiveFile=$CDS -Xlog:cds=error#{enableNativeAccess != null && !enableNativeAccess.isEmpty() ? " --enable-native-access=" + enableNativeAccess : ""}#{hasModulePath ? " --module-path $MP" : ""}#{classpath != null && !classpath.isEmpty() ? " -cp " + classpath : ""} -m #{rootModule}/#{mainClass} $@
 @end
