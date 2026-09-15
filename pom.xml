@@ -57,7 +57,7 @@
 
     <properties>
         <!-- the version number for all spin modules -->
-        <revision>0.4.1-SNAPSHOT</revision>
+        <revision>0.5.0</revision>
 
         <!-- Project Build Properties -->
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
