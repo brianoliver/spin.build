@@ -39,7 +39,6 @@ import build.spin.annotation.System;
 import build.spin.common.JDKTools;
 import build.spin.common.ProcessFailedException;
 import build.spin.common.ProcessRunner;
-import build.spin.common.task.SourcePathKind;
 import build.spin.module.configuration.Source;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleReference;
@@ -719,37 +718,8 @@ public abstract class AbstractJavaLinker
     static Optional<String> detectMainClass(final Path projectPath,
                                                     final Optional<String> mainClassOverride,
                                                     final TelemetryRecorder recorder) {
-        final Path srcDir = projectPath.resolve(SourcePathKind.MAIN.sourceRoot().orElseThrow() + "java");
-        if (mainClassOverride.isPresent()) {
-            final String override = mainClassOverride.get();
-            final Path expected = srcDir.resolve(override.replace('.', '/') + ".java");
-            if (!Files.isRegularFile(expected)) {
-                throw new RuntimeException(("Configured '%s' value [%s] does not exist: no source file at [%s] "
-                    + "-- check %s")
-                    .formatted(MAIN_CLASS_KEY, override, expected, configurationLocation()));
-            }
-            return mainClassOverride;
-        }
-        if (!Files.isDirectory(srcDir)) {
-            return Optional.empty();
-        }
-        try (var walk = Files.walk(srcDir)) {
-            final List<String> candidates = walk
-                .filter(p -> p.toString().endsWith(".java"))
-                .filter(p -> !p.getFileName().toString().equals("module-info.java"))
-                .filter(AbstractJavaLinker::hasMainMethod)
-                .map(p -> toClassName(p, srcDir))
-                .toList();
-            if (candidates.size() > 1) {
-                throw new RuntimeException(("Multiple candidate main classes found in [%s]: %s "
-                    + "-- set '%s' in %s to disambiguate")
-                    .formatted(srcDir, candidates, MAIN_CLASS_KEY, configurationLocation()));
-            }
-            candidates.forEach(name -> recorder.diagnostic("auto-detected main class: %s", name));
-            return candidates.stream().findFirst();
-        } catch (final IOException e) {
-            return Optional.empty();
-        }
+        return MainClassDetection.detect(
+            projectPath, mainClassOverride, MAIN_CLASS_KEY, configurationLocation(), recorder);
     }
 
     // human-readable pointer to where jlink's own configuration lives, e.g.
@@ -759,27 +729,6 @@ public abstract class AbstractJavaLinker
     private static String configurationLocation() {
         return "%s/%s.properties"
             .formatted(build.spin.module.configuration.Configuration.DIRECTORY, CONFIGURATION_SOURCE);
-    }
-
-    private static boolean hasMainMethod(final Path javaFile) {
-        try {
-            return Files.readString(javaFile).contains("void main(");
-        } catch (final IOException e) {
-            return false;
-        }
-    }
-
-    private static String toClassName(final Path javaFile, final Path srcDir) {
-        final Path rel = srcDir.relativize(javaFile);
-        final StringBuilder name = new StringBuilder();
-        for (int i = 0; i < rel.getNameCount(); i++) {
-            if (i > 0) {
-                name.append('.');
-            }
-            final String part = rel.getName(i).toString();
-            name.append(i == rel.getNameCount() - 1 ? part.replaceAll("\\.java$", "") : part);
-        }
-        return name.toString();
     }
 
     record NativePlatform(String osDir, String archDir) {
