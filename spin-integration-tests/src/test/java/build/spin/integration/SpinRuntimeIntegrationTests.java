@@ -29,7 +29,9 @@ import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Locale;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -63,11 +65,7 @@ class SpinRuntimeIntegrationTests {
         // -- this spin process's own module set, which genuinely lacks jdk.jdwp.agent once spin
         // links its own dev-tool-free runtime image (asserted below).
 
-        final Path spinSh = spinHome().resolve("bin/spin.sh");
-        assertThat(spinSh)
-            .as("expected a self-hosted spin runtime at [%s] -- run `./mvnw install` from the "
-                + "repo root first so spin's own jlink image exists", spinSh)
-            .isRegularFile();
+        final Path spinSh = requireSpinSh();
 
         assertThat(runListModules(spinHome()))
             .as("this test only proves anything if spin's own runtime genuinely lacks "
@@ -77,16 +75,10 @@ class SpinRuntimeIntegrationTests {
 
         final Path fixture = copyFixture("jlink-jdk-module");
 
-        final Process jlink = new ProcessBuilder(spinSh.toString(), "clean", "jlink", "--jlink-host-only")
-            .directory(fixture.toFile())
-            .redirectErrorStream(true)
-            .start();
-        final String output = new String(jlink.getInputStream().readAllBytes());
-        final int exitCode = jlink.waitFor();
-
-        assertThat(exitCode).as("spin.sh clean jlink failed:%n%s", output).isZero();
-        assertThat(output)
-            .as("expected no classify fallback warning:%n%s", output)
+        final SpinRun run = runSpin(spinSh, fixture, "clean", "jlink", "--jlink-host-only");
+        assertThat(run.exitCode()).as("spin.sh clean jlink failed:%n%s", run.output()).isZero();
+        assertThat(run.output())
+            .as("expected no classify fallback warning:%n%s", run.output())
             .doesNotContain("falling back to classify-only");
 
         final Path packagePath = fixture.resolve(".build/jlink-jdk-module-" + hostOs() + "-" + hostArch());
@@ -112,25 +104,36 @@ class SpinRuntimeIntegrationTests {
         // "app") and an app.Main with a main() that prints "hello world", exactly what exec needs, so
         // there's no reason to hand-write a second near-identical fixture just for this.
 
-        final Path spinSh = spinHome().resolve("bin/spin.sh");
-        assertThat(spinSh)
-            .as("expected a self-hosted spin runtime at [%s] -- run `./mvnw install` from the "
-                + "repo root first so spin's own jlink image exists", spinSh)
-            .isRegularFile();
-
+        final Path spinSh = requireSpinSh();
         final Path fixture = copyFixture("jlink-jdk-module");
 
-        final Process spin = new ProcessBuilder(spinSh.toString(), "exec")
-            .directory(fixture.toFile())
-            .redirectErrorStream(true)
-            .start();
-        final String output = new String(spin.getInputStream().readAllBytes());
-        final int exitCode = spin.waitFor();
-
-        assertThat(exitCode).as("spin.sh exec failed:%n%s", output).isZero();
-        assertThat(output)
-            .as("expected app.Main's own stdout to reach spin's console live:%n%s", output)
+        final SpinRun run = runSpin(spinSh, fixture, "exec");
+        assertThat(run.exitCode()).as("spin.sh exec failed:%n%s", run.output()).isZero();
+        assertThat(run.output())
+            .as("expected app.Main's own stdout to reach spin's console live:%n%s", run.output())
             .contains("hello world");
+    }
+
+    @Test
+    void execShouldRunAProjectsOwnMainClassDirectlyWithoutAModuleInfo() throws Exception {
+        // Regression coverage for AbstractJavaExec: a project with no module-info.java compiles to
+        // an automatic module (JDKModuleDescriptor#isAutomatic()), whose synthesized module name
+        // only lines up with the root module once Compile's raw output is packaged into a matching
+        // JAR -- which `spin exec` never does, it runs straight against Compile's output directory.
+        // So `-m rootModule/mainClass` can never resolve here; exec must instead fall back to a
+        // plain classpath launch (`java -cp ... mainClass`).
+        //
+        // Reuses the custom-task-without-module-info fixture's HelloWorld.java as-is -- it's
+        // already a module-info-less class with a main() that prints, exactly what this needs.
+
+        final Path spinSh = requireSpinSh();
+        final Path fixture = copyFixture("custom-task-without-module-info");
+
+        final SpinRun run = runSpin(spinSh, fixture, "exec");
+        assertThat(run.exitCode()).as("spin.sh exec failed:%n%s", run.output()).isZero();
+        assertThat(run.output())
+            .as("expected HelloWorld's own stdout to reach spin's console live:%n%s", run.output())
+            .contains("Hello");
     }
 
     @Test
@@ -146,28 +149,42 @@ class SpinRuntimeIntegrationTests {
         // hand-written requires clauses to fall back on: reaching a successful `greet` execution
         // proves the --system branch compiled and loaded it.
 
+        final Path spinSh = requireSpinSh();
+        final Path fixture = copyFixture("custom-task-without-module-info");
+
+        final SpinRun run = runSpin(spinSh, fixture, "greet");
+        assertThat(run.exitCode()).as("spin.sh greet failed:%n%s", run.output()).isZero();
+
+        final Path marker = fixture.resolve(".build/greeting.txt");
+        assertThat(marker)
+            .as("expected the module-info-less custom 'greet' task to have written its marker:%n%s", run.output())
+            .isRegularFile();
+        assertThat(Files.readString(marker)).isEqualTo("hello custom task without a module-info");
+    }
+
+    private static Path requireSpinSh() {
         final Path spinSh = spinHome().resolve("bin/spin.sh");
         assertThat(spinSh)
             .as("expected a self-hosted spin runtime at [%s] -- run `./mvnw install` from the "
                 + "repo root first so spin's own jlink image exists", spinSh)
             .isRegularFile();
+        return spinSh;
+    }
 
-        final Path fixture = copyFixture("custom-task-without-module-info");
+    private record SpinRun(int exitCode, String output) {
+    }
 
-        final Process spin = new ProcessBuilder(spinSh.toString(), "greet")
+    private static SpinRun runSpin(final Path spinSh, final Path fixture, final String... args)
+        throws IOException, InterruptedException {
+
+        final List<String> command = new ArrayList<>(List.of(spinSh.toString()));
+        command.addAll(List.of(args));
+        final Process spin = new ProcessBuilder(command)
             .directory(fixture.toFile())
             .redirectErrorStream(true)
             .start();
         final String output = new String(spin.getInputStream().readAllBytes());
-        final int exitCode = spin.waitFor();
-
-        assertThat(exitCode).as("spin.sh greet failed:%n%s", output).isZero();
-
-        final Path marker = fixture.resolve(".build/greeting.txt");
-        assertThat(marker)
-            .as("expected the module-info-less custom 'greet' task to have written its marker:%n%s", output)
-            .isRegularFile();
-        assertThat(Files.readString(marker)).isEqualTo("hello custom task without a module-info");
+        return new SpinRun(spin.waitFor(), output);
     }
 
     private static String runListModules(final Path imagePath) throws IOException, InterruptedException {

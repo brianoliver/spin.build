@@ -50,7 +50,8 @@ import java.util.stream.Stream;
 
 /**
  * An abstract {@link Task} that runs a {@link Project}'s own compiled application directly, forked
- * as {@code java --module-path ... [-cp ...] -m rootModule/mainClass}.
+ * as {@code java --module-path ... [-cp ...] -m rootModule/mainClass} for a project with a real
+ * {@code module-info.java}, or plain {@code java -cp ... mainClass} otherwise -- see {@link #exec}.
  *
  * <p>Forked with {@link Console#ofSystem()} rather than the output-capturing {@link
  * build.spawn.application.option.StandardOutputSubscriber}/{@code StandardErrorSubscriber} pattern
@@ -120,29 +121,46 @@ public abstract class AbstractJavaExec
             .orElseThrow(() -> new IllegalStateException(
                 "Compile produced no output for [" + this.project.path() + "]"));
 
-        final List<Path> modulePath = Stream.concat(Stream.of(ownOutput), resolution.modulePath().stream()).toList();
-        final List<Path> classPath = resolution.classPath();
-
         final var hostJdk = this.platform.getVersion(this.systemJavaVersion.major())
             .or(this.platform::getLatest)
             .orElseThrow(() -> new RuntimeException(
                 "No host-executable JDK found for Java " + this.systemJavaVersion.major() + " to run exec with, "
                     + "and no latest host JDK available"));
 
-        final String rootModule = this.descriptor.moduleName().toString();
-
         final ConfigurationBuilder execConfiguration = ConfigurationBuilder.create()
             .add(JDKTools.executable(hostJdk.home().path(), "java"))
             .add(Name.of("exec/" + this.project.name()))
             .add(WorkingDirectory.of(this.project.path().toString()))
-            .add(Console.ofSystem())
-            .add(Argument.of("--module-path")).add(Argument.of(joinPaths(modulePath)));
-        if (!classPath.isEmpty()) {
-            execConfiguration.add(Argument.of("-cp")).add(Argument.of(joinPaths(classPath)));
-        }
-        execConfiguration.add(Argument.of("-m")).add(Argument.of(rootModule + "/" + mainClass));
+            .add(Console.ofSystem());
 
-        this.recorder.info("running [%s/%s] for [%s]", rootModule, mainClass, this.project.path());
+        // A raw compiled-classes directory (no module-info.class inside it) put on the module path
+        // is treated as an automatic module named after the *directory's own basename* (e.g.
+        // "target"), never after this.descriptor.moduleName() -- that synthesized name only lines
+        // up once the output is packaged into a JAR file named to match (which jlink's launch
+        // script relies on, but exec runs straight against Compile's raw output). So `-m
+        // rootModule/mainClass` only resolves for a project with a *real* module-info.java; every
+        // other project must run on the classpath instead.
+        if (this.descriptor.isAutomatic()) {
+            final List<Path> classPath = Stream
+                .of(Stream.of(ownOutput), resolution.modulePath().stream(), resolution.classPath().stream())
+                .flatMap(s -> s)
+                .toList();
+            execConfiguration.add(Argument.of("-cp")).add(Argument.of(joinPaths(classPath)));
+            execConfiguration.add(Argument.of(mainClass));
+            this.recorder.info("running [%s] for [%s]", mainClass, this.project.path());
+        } else {
+            final List<Path> modulePath =
+                Stream.concat(Stream.of(ownOutput), resolution.modulePath().stream()).toList();
+            final List<Path> classPath = resolution.classPath();
+            final String rootModule = this.descriptor.moduleName().toString();
+
+            execConfiguration.add(Argument.of("--module-path")).add(Argument.of(joinPaths(modulePath)));
+            if (!classPath.isEmpty()) {
+                execConfiguration.add(Argument.of("-cp")).add(Argument.of(joinPaths(classPath)));
+            }
+            execConfiguration.add(Argument.of("-m")).add(Argument.of(rootModule + "/" + mainClass));
+            this.recorder.info("running [%s/%s] for [%s]", rootModule, mainClass, this.project.path());
+        }
 
         try (var application = this.machine.launch(Application.class, execConfiguration)) {
             ProcessRunner.await(application, "exec",
