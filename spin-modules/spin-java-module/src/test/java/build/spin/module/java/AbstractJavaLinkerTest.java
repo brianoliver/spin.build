@@ -462,10 +462,19 @@ class AbstractJavaLinkerTest {
     @Test
     void scriptTemplate_execsPlainJavaWhenProcessNameNotConfigured() {
         final var out = new TextOut();
-        new ScriptTemplate("", false, "build.example", "build.example.Main", "example", null)
+        new ScriptTemplate("", false, "build.example", "build.example.Main", "example", null, null)
             .render(out);
 
         assertThat(out.toString()).contains("exec $SCRIPTPATH/java ");
+    }
+
+    @Test
+    void scriptTemplate_execsRenamedExecutableUnderConfiguredProcessName() {
+        final var out = new TextOut();
+        new ScriptTemplate("", false, "build.example", "build.example.Main", "example", null, "myapp")
+            .render(out);
+
+        assertThat(out.toString()).contains("exec $SCRIPTPATH/myapp ");
     }
 
     // --- classifyCached ---

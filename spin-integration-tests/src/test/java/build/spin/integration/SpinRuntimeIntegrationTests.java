@@ -162,6 +162,58 @@ class SpinRuntimeIntegrationTests {
         assertThat(Files.readString(marker)).isEqualTo("hello custom task without a module-info");
     }
 
+    @Test
+    void jlinkRunningSpinShouldExecUnderItsOwnConfiguredProcessName() throws Exception {
+        // Regression coverage for AbstractJavaLinker's `process-name` jlink config: spin's own
+        // self-hosted build sets `process-name = spin` in
+        // spin/.spin/build.spin.module.jlink.properties, so bin/spin.sh must exec a renamed copy
+        // of the java launcher (bin/spin) rather than bin/java -- otherwise every spin process
+        // shows up as "java" in `ps`/`top`, indistinguishable from any other JVM on the box.
+        //
+        // `spin exec` forks the fixture's HelloWorld as a *child* of the running spin process, so
+        // HelloWorld reports its parent's (spin's own) executable basename via
+        // ProcessHandle#info -- not /proc/self/comm, which only exists on Linux, keeping this
+        // portable across the mac/linux targets this test class already supports.
+
+        final Path spinBinary = spinHome().resolve("bin/spin");
+        assertThat(spinBinary)
+            .as("expected spin's own jlink image to contain a renamed bin/spin executable "
+                + "alongside bin/java, produced by the `process-name = spin` config in "
+                + "spin/.spin/build.spin.module.jlink.properties")
+            .isRegularFile();
+        assertThat(Files.isExecutable(spinBinary))
+            .as("expected [%s] to have inherited bin/java's executable bit via COPY_ATTRIBUTES", spinBinary)
+            .isTrue();
+
+        assertExecReportsSpinAsItsOwnParentProcess("process-name");
+    }
+
+    @Test
+    void jlinkRunningSpinShouldExecAModularProjectUnderItsOwnConfiguredProcessName() throws Exception {
+        // Same regression coverage as jlinkRunningSpinShouldExecUnderItsOwnConfiguredProcessName,
+        // but for a project with a real module-info.java: AbstractJavaExec forks such a project on
+        // the module path (`-m rootModule/mainClass`), a different branch than the classpath launch
+        // ("process-name" fixture, no module-info) that other test exercises. Both branches fork the
+        // application as a child of the running spin process, so app.Main's own
+        // ProcessHandle#parent() check should see the same 'spin' basename either way.
+
+        assertExecReportsSpinAsItsOwnParentProcess("process-name-modular");
+    }
+
+    // Shared by the two "process-name" exec tests above, which differ only in which fixture
+    // (classpath-launch vs. module-path-launch) they run `spin exec` against.
+    private void assertExecReportsSpinAsItsOwnParentProcess(final String fixtureName) throws Exception {
+        final Path spinSh = requireSpinSh();
+        final Path fixture = copyFixture(fixtureName);
+
+        final SpinRun run = runSpin(spinSh, fixture, "exec");
+        assertThat(run.exitCode()).as("spin.sh exec failed:%n%s", run.output()).isZero();
+        assertThat(run.output())
+            .as("expected the running spin process's own executable basename to be 'spin', not "
+                + "'java' -- output was:%n%s", run.output())
+            .contains("spin");
+    }
+
     private static Path requireSpinSh() {
         final Path spinSh = spinHome().resolve("bin/spin.sh");
         assertThat(spinSh)

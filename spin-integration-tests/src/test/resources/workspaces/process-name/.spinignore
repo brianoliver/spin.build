@@ -1,0 +1,2 @@
+# Indicates that folders and files in folder must be ignored by Spin
+# (meaning that this folder must not be considered as part of a Project or a parent for a Project)
