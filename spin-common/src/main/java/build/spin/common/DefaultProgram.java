@@ -265,7 +265,7 @@ public final class DefaultProgram
                 taskContext.bind(taskPlugin).asAllInterfaces();
 
                 // allow project resources that are resolvers to resolve
-                taskContext.addResolver(dependency -> project.resources()
+                taskContext.addResolver(dependency -> taskProject.resources()
                     .filter(Resolver.class::isInstance)
                     .map(r -> (Resolver<Object>) r)
                     .flatMap(resolver -> resolver.resolve(dependency).stream())
