@@ -73,6 +73,8 @@ class ProgramBehaviorTests {
         NestedCodependencyTestPlugin.PREPROCESSOR_ORDER.set(-1);
         NestedCodependencyTestPlugin.MAIN_TASK_RAN.set(false);
         NestedCodependencyTestPlugin.MAIN_TASK_ORDER.set(-1);
+        ConfigurationChildProjectTestPlugin.MAIN_TASK_RAN.set(false);
+        ConfigurationChildProjectTestPlugin.OBSERVED_VALUE = null;
     }
 
     @Test
@@ -393,5 +395,23 @@ class ProgramBehaviorTests {
         assertThat(NestedCodependencyTestPlugin.PREPROCESSOR_ORDER.get())
             .withFailMessage("the preprocessor must run before the main task it pre-processes")
             .isLessThan(NestedCodependencyTestPlugin.MAIN_TASK_ORDER.get());
+    }
+
+    @Test
+    @WorkspacePath("configuration-child-project")
+    void shouldResolveChildConfigurationWhenInvokedFromWorkspaceRoot(final Engine engine,
+                                                                     final Workspace workspace) throws Exception {
+
+        final AssetCache cache = DefaultAssetCache.create();
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("configuration-child-main"));
+        program.execute(cache);
+
+        assertThat(ConfigurationChildProjectTestPlugin.MAIN_TASK_RAN.get()).withFailMessage("main task must have run").isTrue();
+        assertThat(ConfigurationChildProjectTestPlugin.OBSERVED_VALUE)
+            .withFailMessage("the task's own child Project defines \"value\" as \"from-child\" in its own "
+                + ".spin/test.configuration.child.properties - if the Resolver were (as the bug caused) "
+                + "consulting the root Program Project instead of the Task's own Project, this value would "
+                + "never be resolved")
+            .isEqualTo("from-child");
     }
 }
