@@ -63,6 +63,7 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.file.FileSystem;
 import java.nio.file.FileSystems;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -241,6 +242,16 @@ public class Spin {
     private record Discovery(Workspace workspace, Project project) {
     }
 
+    /**
+     * Fails fast with an {@link IllegalArgumentException} when {@code path} isn't a directory, rather than
+     * letting a mistyped {@code -w}/{@code -r} silently fall through to workspace/project discovery at some
+     * other, unintended location.
+     */
+    static void requireDirectory(final Path path, final String description) {
+        if (!Files.isDirectory(path)) {
+            throw new IllegalArgumentException(description + " does not exist: [" + path + "]");
+        }
+    }
 
     private static Discovery discover(final Engine engine) {
 
@@ -249,10 +260,14 @@ public class Spin {
 
         final Path path = userPath.resolve(engine.options().get(WorkingDirectory.class).get());
 
+        requireDirectory(path, "Working directory");
+
         final List<Path> additionalRoots = engine.options().stream(Root.class)
             .map(root -> root.path(fileSystem))
             .map(userPath::resolve)
             .toList();
+
+        additionalRoots.forEach(root -> requireDirectory(root, "Additional root"));
 
         final Workspace workspace;
 
