@@ -30,6 +30,7 @@ import build.base.version.Version;
 import build.codemodel.dependency.injection.PostInject;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.codemodel.jdk.descriptor.RequiresModifier;
+import build.spawn.jdk.JDK;
 import build.spin.Plugin;
 import build.spin.Project;
 import build.spin.Task;
@@ -133,6 +134,9 @@ public class MavenPlugin
 
         @Inject
         private JDKModuleDescriptor descriptor;
+
+        @Inject
+        private JDK jdk;
 
         @Inject
         private ModuleCatalog catalog;
@@ -239,7 +243,7 @@ public class MavenPlugin
             final Node dependenciesNode = document.createElement("dependencies");
 
             this.descriptor.requiresClauses()
-                .filter(requires -> !JavaPlatform.isJavaPlatformModule(
+                .filter(requires -> !JavaPlatform.isJavaPlatformModule(this.jdk,
                     requires.requiresModuleName().toString()))  //filter out Java Platform dependencies
                 .map(require -> {
                     // determine the Version for the dependency

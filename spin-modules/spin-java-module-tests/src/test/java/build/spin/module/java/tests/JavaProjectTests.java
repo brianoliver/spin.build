@@ -1034,6 +1034,9 @@ public class JavaProjectTests {
         var initial = ModuleReference.of("build.spawn.platform.local",
             Version.parse("0.1.0"));
 
+        var jdk25 = platform.getVersion(25)
+            .orElseThrow(() -> new AssertionError("Failed to obtain Java Development Kit for Java 25"));
+
         pending.push(initial);
 
         while (!pending.isEmpty()) {
@@ -1059,7 +1062,7 @@ public class JavaProjectTests {
 
                     // push the non-Java Platform required modules onto the stack for processing
                     moduleDescriptor.requiresClauses()
-                        .filter(r -> !JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString()))
+                        .filter(r -> !JavaPlatform.isJavaPlatformModule(jdk25, r.requiresModuleName().toString()))
                         .map(r -> ModuleReference.of(r.requiresModuleName().toString(),
                             JDKModuleDescriptor.requiresVersion(r)))
                         .filter(module -> !processed.contains(module))
@@ -1190,7 +1193,7 @@ public class JavaProjectTests {
                 .map(String::trim)
                 .filter(line -> !line.contains(" "))
                 .forEach(moduleName -> {
-                    if (JavaPlatform.isJavaPlatformModule(moduleName)) {
+                    if (JavaPlatform.isJavaPlatformModule(jdk, moduleName)) {
                         final ModuleReference reference = ModuleReference.of(moduleName, jdkVersion);
                         javaPlatformModules.add(reference);
                     }

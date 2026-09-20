@@ -238,11 +238,11 @@ public abstract class AbstractJavaDependencyAnalysis
                         moduleDescriptor.requiresClauses()
                             .filter(r -> r.traits(RequiresModifier.class).noneMatch(m -> m == RequiresModifier.STATIC))
                             .peek(r -> {
-                                if (JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString())) {
+                                if (JavaPlatform.isJavaPlatformModule(jdk, r.requiresModuleName().toString())) {
                                     platformModules.add(ModuleReference.of(r.requiresModuleName().toString(), jdkVersion));
                                 }
                             })
-                            .filter(r -> !JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString()))
+                            .filter(r -> !JavaPlatform.isJavaPlatformModule(jdk, r.requiresModuleName().toString()))
                             .map(r -> {
                                 final String name = r.requiresModuleName().toString();
                                 final Optional<Version> version = resolveRequiredVersion(
@@ -513,7 +513,7 @@ public abstract class AbstractJavaDependencyAnalysis
             .forEach(line -> {
                 final var moduleName = moduleNameFromListDepsLine(line);
 
-                if (JavaPlatform.isJavaPlatformModule(moduleName)) {
+                if (JavaPlatform.isJavaPlatformModule(jdk, moduleName)) {
                     final ModuleReference reference = ModuleReference.of(moduleName, jdkVersion);
                     platformModules.add(reference);
                 }

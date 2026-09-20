@@ -23,6 +23,7 @@ package build.spin.module.java;
 import build.codemodel.foundation.descriptor.RequiresModuleDescriptor;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.codemodel.jdk.descriptor.RequiresModifier;
+import build.spawn.jdk.JDK;
 import build.spin.Project;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleCatalog;
@@ -63,7 +64,8 @@ final class AnnotationProcessorPaths {
                         final ModuleVersioning versioning,
                         final Artifact.Resolver resolver,
                         final BuildDirectoryName buildDirectoryName,
-                        final TargetDirectoryName targetDirectoryName) {
+                        final TargetDirectoryName targetDirectoryName,
+                        final JDK jdk) {
 
         if (moduleDescriptor.annotationClauses().findAny().isEmpty()) {
             return "";
@@ -75,12 +77,12 @@ final class AnnotationProcessorPaths {
         // workspace sibling projects providing javax.annotation.processing.Processor
         annotationProcessorProjects(moduleDescriptor, project)
             .forEach(prj -> collectProcessorDeps(prj, paths, visited,
-                catalog, versioning, resolver, buildDirectoryName, targetDirectoryName));
+                catalog, versioning, resolver, buildDirectoryName, targetDirectoryName, jdk));
 
         // requires static → external annotation processors resolved from catalog
         moduleDescriptor.requiresClauses()
             .filter(r -> r.traits(RequiresModifier.class).anyMatch(m -> m == RequiresModifier.STATIC))
-            .filter(r -> !JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString()))
+            .filter(r -> !JavaPlatform.isJavaPlatformModule(jdk, r.requiresModuleName().toString()))
             .forEach(r -> {
                 final String name = r.requiresModuleName().toString();
                 if (visited.add(name)) {
@@ -120,7 +122,8 @@ final class AnnotationProcessorPaths {
                                              final ModuleVersioning versioning,
                                              final Artifact.Resolver resolver,
                                              final BuildDirectoryName buildDirectoryName,
-                                             final TargetDirectoryName targetDirectoryName) {
+                                             final TargetDirectoryName targetDirectoryName,
+                                             final JDK jdk) {
         prj.plugins(JavaCompilerPlugin.class).findFirst().ifPresent(plugin -> {
             final JDKModuleDescriptor desc = plugin.getModuleDescriptor();
             if (!visited.add(desc.moduleName().toString())) {
@@ -128,7 +131,7 @@ final class AnnotationProcessorPaths {
             }
             paths.add(outputPath(prj, buildDirectoryName, targetDirectoryName));
             collectTransitiveRequires(desc, paths, visited, prj, catalog, versioning, resolver,
-                buildDirectoryName, targetDirectoryName);
+                buildDirectoryName, targetDirectoryName, jdk);
         });
     }
 
@@ -140,9 +143,10 @@ final class AnnotationProcessorPaths {
                                                   final ModuleVersioning versioning,
                                                   final Artifact.Resolver resolver,
                                                   final BuildDirectoryName buildDirectoryName,
-                                                  final TargetDirectoryName targetDirectoryName) {
+                                                  final TargetDirectoryName targetDirectoryName,
+                                                  final JDK jdk) {
         final LinkedList<RequiresModuleDescriptor> frontier = descriptor.requiresClauses()
-            .filter(r -> !JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString()))
+            .filter(r -> !JavaPlatform.isJavaPlatformModule(jdk, r.requiresModuleName().toString()))
             .filter(r -> r.traits(RequiresModifier.class).noneMatch(m -> m == RequiresModifier.STATIC))
             .collect(Collectors.toCollection(LinkedList::new));
 
@@ -158,7 +162,7 @@ final class AnnotationProcessorPaths {
                 paths.add(outputPath(sibling.get(), buildDirectoryName, targetDirectoryName));
                 sibling.get().plugins(JavaCompilerPlugin.class).findFirst()
                     .ifPresent(p -> p.getModuleDescriptor().requiresClauses()
-                        .filter(r -> !JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString()))
+                        .filter(r -> !JavaPlatform.isJavaPlatformModule(jdk, r.requiresModuleName().toString()))
                         .filter(r -> !visited.contains(r.requiresModuleName().toString()))
                         .forEach(frontier::add));
             } else {

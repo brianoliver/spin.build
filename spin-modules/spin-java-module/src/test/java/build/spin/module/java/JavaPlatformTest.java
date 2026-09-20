@@ -26,11 +26,22 @@ import build.spawn.jdk.JDK;
 import build.spawn.jdk.OperatingSystem;
 import build.spawn.jdk.option.JDKHome;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.lang.classfile.ClassFile;
+import java.lang.classfile.attribute.ModuleAttribute;
+import java.lang.constant.ModuleDesc;
+import java.lang.constant.PackageDesc;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.stream.Stream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Tests for {@link JavaPlatform}, in particular the target-platform-aware {@link JDK} lookups added to
@@ -40,6 +51,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * @since Jul-2026
  */
 class JavaPlatformTest {
+
+    @TempDir
+    Path tempDir;
 
     private static JDK jdk(final String version, final OperatingSystem os, final Architecture arch, final String home) {
         return JDK.of(JDKVersion.of(version), JDKHome.of(home), os, arch);
@@ -261,5 +275,94 @@ class JavaPlatformTest {
     void hostTarget_matchesTheCurrentlyExecutingVirtualMachinesPlatform() {
         assertThat(JavaPlatform.hostTarget())
             .isEqualTo(new TargetPlatform(OperatingSystem.current(), Architecture.current()));
+    }
+
+    // --- isJavaPlatformModule reads a JDK's real module list instead of guessing from a name prefix ---
+    //
+    // Exercised against JDK.current() -- the JDK actually running this test -- so it takes whichever
+    // code path readPlatformModules resolves to on this machine (jmods/ scan, or the
+    // ModuleFinder.ofSystem() fallback, which only applies to a JDK equal to JDK.current()) -- both
+    // must agree with the JDK's real module graph.
+
+    private static JDK runningJdk() {
+        return JDK.current();
+    }
+
+    @Test
+    void isJavaPlatformModule_trueForAModuleTheRunningJdkActuallyProvides() {
+        assertThat(JavaPlatform.isJavaPlatformModule(runningJdk(), "java.base")).isTrue();
+    }
+
+    @Test
+    void isJavaPlatformModule_falseForAModuleNameRemovedFromModernJdksButStillUsedAsAnAutomaticModuleName() {
+        // java.annotation was a real platform module in JDK 9/10, removed from JDK 11 onward -- but
+        // javax.annotation-api still ships with Automatic-Module-Name: java.annotation, precisely so
+        // old `requires java.annotation;` declarations keep compiling once that jar is back on the
+        // module path. A prefix guess (startsWith("java.")) can't tell that apart from a module the
+        // running (modern) JDK actually provides; reading the real module list can.
+        assertThat(JavaPlatform.isJavaPlatformModule(runningJdk(), "java.annotation")).isFalse();
+    }
+
+    @Test
+    void isJavaPlatformModule_falseForAnEmptyModuleName() {
+        assertThat(JavaPlatform.isJavaPlatformModule(runningJdk(), "")).isFalse();
+    }
+
+    // --- isJavaPlatformModule against a target JDK that is NOT the one running this test ---
+    //
+    // readPlatformModules() has two paths for a non-running JDK: read its own jmods/ (below), or,
+    // when jmods/ is missing/unreadable, throw rather than silently substituting the host's module
+    // list -- ModuleFinder.ofSystem() is only ever a safe proxy for the JDK actually executing Spin.
+
+    @Test
+    void isJavaPlatformModule_readsFromTheGivenJdksOwnJmodsDirectoryRatherThanTheRunningJdk() throws IOException {
+        final Path jmodsDir = Files.createDirectory(this.tempDir.resolve("jmods"));
+        jmod(jmodsDir, "java.base.jmod", "java.base");
+        jmod(jmodsDir, "jdk.compiler.jmod", "jdk.compiler", "java.base");
+
+        final JDK target = jdk("25.0.3", OperatingSystem.current(), Architecture.current(), this.tempDir.toString());
+
+        assertThat(JavaPlatform.isJavaPlatformModule(target, "jdk.compiler")).isTrue();
+        // java.logging is a real module of the JDK actually running this test, but it was never
+        // written into this fabricated jmods/ -- proves the check is scoped to `target`'s own
+        // module list rather than falling back to (or merging with) the host's
+        assertThat(JavaPlatform.isJavaPlatformModule(target, "java.logging")).isFalse();
+    }
+
+    @Test
+    void isJavaPlatformModule_throwsForANonRunningJdkWithNoJmodsDirectory() {
+        final JDK target = jdk("25.0.3", OperatingSystem.current(), Architecture.current(),
+            this.tempDir.resolve("does-not-exist").toString());
+
+        assertThatThrownBy(() -> JavaPlatform.isJavaPlatformModule(target, "java.base"))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("jmods/")
+            .hasMessageContaining(target.toString());
+    }
+
+    /**
+     * Writes a minimal {@code .jmod}-shaped zip: a {@code classes/module-info.class} entry built with
+     * the {@link ClassFile} API, same as {@code JmodModuleFinderTest} uses -- {@link JmodModuleFinder}
+     * only ever reads that one entry, so the rest of a real {@code .jmod}'s shape is irrelevant here.
+     */
+    private static Path jmod(final Path dir, final String fileName, final String moduleName,
+                             final String... requiresModules) throws IOException {
+        final byte[] moduleInfoBytes = ClassFile.of().buildModule(
+            ModuleAttribute.of(
+                ModuleDesc.of(moduleName),
+                mb -> {
+                    for (final String req : requiresModules) {
+                        mb.requires(ModuleDesc.of(req), 0, null);
+                    }
+                    mb.exports(PackageDesc.of(moduleName), 0);
+                }));
+
+        final Path jmod = dir.resolve(fileName);
+        try (var zos = new ZipOutputStream(Files.newOutputStream(jmod))) {
+            zos.putNextEntry(new ZipEntry("classes/module-info.class"));
+            zos.write(moduleInfoBytes);
+            zos.closeEntry();
+        }
+        return jmod;
     }
 }

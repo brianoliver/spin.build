@@ -33,6 +33,7 @@ module build.spin.module.maven {
     requires build.base.telemetry;
     requires build.codemodel.dependency.injection;
     requires build.codemodel.jdk;
+    requires build.spawn.jdk;
     requires build.spin;
     requires build.spin.module.configuration;
     requires build.spin.module.gpg;

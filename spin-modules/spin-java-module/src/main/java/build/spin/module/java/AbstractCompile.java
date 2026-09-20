@@ -138,7 +138,8 @@ public abstract class AbstractCompile
         return AnnotationProcessorPaths.build(
             this.moduleDescriptor, this.project,
             this.catalog, this.versioning, this.resolver,
-            this.buildDirectoryName, this.targetDirectoryName);
+            this.buildDirectoryName, this.targetDirectoryName,
+            this.javaDevelopmentKit);
     }
 
     /**
