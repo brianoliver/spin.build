@@ -1,5 +1,7 @@
 package build.spin;
 
+import jakarta.inject.Named;
+
 import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
@@ -108,15 +110,16 @@ class ReferenceTests {
     }
 
     /**
-     * Verifies that {@code toString()} renders as {@code project/PluginDisplayName.Task},
-     * deferring to {@link Engine#pluginDisplayName} for the declaring {@link Plugin}'s portion of the
-     * name rather than ever using the {@code $}-separated nested-class {@link Class#getName()}.
+     * Verifies that {@code toString()} renders as {@code qualifiedName/PluginDisplayName.Task},
+     * using {@link Project#qualifiedName()} for the project portion and deferring to
+     * {@link Engine#pluginDisplayName} for the declaring {@link Plugin}'s portion of the name
+     * rather than ever using the {@code $}-separated nested-class {@link Class#getName()}.
      */
     @Test
     @SuppressWarnings("unchecked")
     void toStringUsesSlashSeparatorAndPluginDisplayName() {
         final Project project = mock(Project.class);
-        when(project.name()).thenReturn("my-project");
+        when(project.qualifiedName()).thenReturn("workspace/my-project");
 
         final Engine engine = mock(Engine.class);
         when(project.engine()).thenReturn(engine);
@@ -127,10 +130,39 @@ class ReferenceTests {
             (Class<? extends Task<?>>) (Class<?>) NestedTask.class;
         final Reference ref = Reference.of(project, taskClass);
 
-        assertThat(ref.toString()).isEqualTo("my-project/build.spin.ReferenceTests.NestedTask");
+        assertThat(ref.toString()).isEqualTo("workspace/my-project/build.spin.ReferenceTests.NestedTask");
+    }
+
+    /**
+     * Verifies that {@link Reference#taskDisplayName()} honors a {@code @Named} annotation on the
+     * {@link Task} {@link Class}, matching {@link Invocable#getTaskName()}, rather than always using the
+     * {@link Class}'s simple name.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void taskDisplayNameHonorsNamedAnnotationOnTaskClass() {
+        final Project project = mock(Project.class);
+
+        final Engine engine = mock(Engine.class);
+        when(project.engine()).thenReturn(engine);
+        when(engine.pluginDisplayName((Class<? extends Plugin>) (Class<?>) ReferenceTests.class))
+            .thenReturn("build.spin.ReferenceTests");
+
+        final Class<? extends Task<?>> taskClass =
+            (Class<? extends Task<?>>) (Class<?>) NamedNestedTask.class;
+        final Reference ref = Reference.of(project, taskClass);
+
+        assertThat(ref.taskDisplayName()).isEqualTo("build.spin.ReferenceTests.custom.task.name");
     }
 
     private static class NestedTask implements Task<String> {
+        public String compute() {
+            return "";
+        }
+    }
+
+    @Named("custom.task.name")
+    private static class NamedNestedTask implements Task<String> {
         public String compute() {
             return "";
         }

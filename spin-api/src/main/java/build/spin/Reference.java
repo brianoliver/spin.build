@@ -20,6 +20,8 @@ package build.spin;
  * #L%
  */
 
+import jakarta.inject.Named;
+
 import java.util.Objects;
 
 /**
@@ -52,7 +54,7 @@ public interface Reference {
 
             @Override
             public String toString() {
-                return project.name() + "/" + taskDisplayName();
+                return project.qualifiedName() + "/" + taskDisplayName();
             }
 
             @Override
@@ -99,12 +101,18 @@ public interface Reference {
      * name (see {@link Engine#pluginDisplayName}) rather than its fully-qualified {@link Class} name -
      * the {@link Plugin}'s simple name is unique enough in virtually every invocation and reads far more
      * cleanly than its fully-qualified name.
+     * <p>
+     * The {@link Task} name portion honors a {@code @Named} annotation on the {@link Task} {@link Class},
+     * matching {@link Invocable#getTaskName()} - falling back to the simple name of the {@link Class} when
+     * no {@code @Named} annotation is defined.
      *
      * @return the display name of the {@link Task}, eg: {@code JavaPlugin.Compile}
      */
     default String taskDisplayName() {
         final String pluginName = project().engine().pluginDisplayName(getPluginClass());
+        final Named named = getTaskClass().getAnnotation(Named.class);
+        final String taskName = named == null ? getTaskClass().getSimpleName() : named.value().trim();
 
-        return pluginName + "." + getTaskClass().getSimpleName();
+        return pluginName + "." + taskName;
     }
 }
