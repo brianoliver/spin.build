@@ -28,6 +28,7 @@ import build.base.version.Version;
 import build.codemodel.foundation.descriptor.RequiresModuleDescriptor;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.percolate.core.ModuleGraphClassifier;
+import build.spawn.jdk.JDK;
 import build.spin.Invocable;
 import build.spin.Project;
 import build.spin.Reference;
@@ -118,6 +119,9 @@ public abstract class AbstractDetectResolution
     @Inject
     private ProjectPom projectPom;
 
+    @Inject
+    private JDK jdk;
+
     /**
      * Whether already-built Maven/Gradle output is trusted as equivalent to spin's own {@code .build/}
      * output -- see {@link ReuseExternalBuildOutput}. Disabled by default, so this resolution and the
@@ -192,14 +196,14 @@ public abstract class AbstractDetectResolution
         // seed the frontier from the direct requires of the injected module descriptor
         final List<RequiresModuleDescriptor> frontier = new ArrayList<>();
         this.moduleDescriptor.requiresClauses()
-            .filter(r -> !JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString()))
+            .filter(r -> !JavaPlatform.isJavaPlatformModule(this.jdk, r.requiresModuleName().toString()))
             .forEach(frontier::add);
 
         while (!frontier.isEmpty()) {
             final RequiresModuleDescriptor requires = frontier.remove(0);
             final String name = requires.requiresModuleName().toString();
 
-            if (JavaPlatform.isJavaPlatformModule(name) || !visited.add(name)) {
+            if (JavaPlatform.isJavaPlatformModule(this.jdk, name) || !visited.add(name)) {
                 continue;
             }
 
@@ -216,7 +220,7 @@ public abstract class AbstractDetectResolution
                 sibling.get().plugins(JavaCompilerPlugin.class)
                     .findFirst()
                     .ifPresent(plugin -> plugin.getModuleDescriptor().requiresClauses()
-                        .filter(r -> !JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString()))
+                        .filter(r -> !JavaPlatform.isJavaPlatformModule(this.jdk, r.requiresModuleName().toString()))
                         .filter(r -> !visited.contains(r.requiresModuleName().toString()))
                         .forEach(frontier::add));
             }
@@ -299,7 +303,7 @@ public abstract class AbstractDetectResolution
 
         final Set<String> directRequireNames = this.moduleDescriptor.requiresClauses()
             .map(r -> r.requiresModuleName().toString())
-            .filter(n -> !JavaPlatform.isJavaPlatformModule(n))
+            .filter(n -> !JavaPlatform.isJavaPlatformModule(this.jdk, n))
             .collect(Collectors.toCollection(LinkedHashSet::new));
 
         final ModuleGraphClassifier.Classification classification = ModuleGraphClassifier.classify(

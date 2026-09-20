@@ -77,7 +77,10 @@
             <groupId>build.base</groupId>
             <artifactId>base-io</artifactId>
         </dependency>
-
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-network</artifactId>
+        </dependency>
         <dependency>
             <groupId>build.base</groupId>
             <artifactId>base-option</artifactId>
@@ -109,6 +112,15 @@
         </dependency>
 
         <dependency>
+            <groupId>build.spawn</groupId>
+            <artifactId>spawn-application</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>build.spawn</groupId>
+            <artifactId>spawn-jdk</artifactId>
+        </dependency>
+
+        <dependency>
             <groupId>jakarta.inject</groupId>
             <artifactId>jakarta.inject-api</artifactId>
         </dependency>
@@ -125,18 +137,6 @@
 
         <dependency>
             <groupId>build.spawn</groupId>
-            <artifactId>spawn-application</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>build.spawn</groupId>
-            <artifactId>spawn-jdk</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>build.spawn</groupId>
             <artifactId>spawn-local-jdk</artifactId>
             <scope>test</scope>
         </dependency>
@@ -144,12 +144,6 @@
         <dependency>
             <groupId>build.spawn</groupId>
             <artifactId>spawn-local-platform</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>build.base</groupId>
-            <artifactId>base-network</artifactId>
             <scope>test</scope>
         </dependency>
 
@@ -185,6 +179,8 @@
                         <!-- required at compile scope (transitively required by spin-api's module-info.java);
                              only directly used in test code -->
                         <ignoredNonTestScopedDependency>build.base:base-flow</ignoredNonTestScopedDependency>
+                        <ignoredNonTestScopedDependency>build.base:base-network</ignoredNonTestScopedDependency>
+                        <ignoredNonTestScopedDependency>build.spawn:spawn-application</ignoredNonTestScopedDependency>
                     </ignoredNonTestScopedDependencies>
                 </configuration>
                 <executions>

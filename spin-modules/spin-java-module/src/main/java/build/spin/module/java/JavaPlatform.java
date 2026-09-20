@@ -32,15 +32,22 @@ import build.spin.Service;
 import build.spin.option.OperatingSystem;
 import jakarta.inject.Inject;
 
+import java.io.IOException;
+import java.lang.module.ModuleFinder;
 import java.nio.file.FileSystem;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.SortedSet;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -281,14 +288,65 @@ public class JavaPlatform
         return getLatest(hostTarget());
     }
 
+    // cached per-JDK platform module name sets, keyed by JDK (whose equals/hashCode are value-based),
+    // so repeated isJavaPlatformModule() calls across every spin-java-module/spin-maven-module call
+    // site don't re-scan the same JDK's jmods/ directory over and over
+    private static final Map<JDK, Set<String>> PLATFORM_MODULES_CACHE = new ConcurrentHashMap<>();
+
     /**
-     * Determines if the specified module name is for a {@link JavaPlatform} module.
+     * Determines if the specified module name is one of the real platform modules the given {@link JDK}
+     * provides, read from its {@code jmods/} directory (falling back to {@link ModuleFinder#ofSystem()}
+     * for a jlinked-down runtime that has no {@code jmods/} of its own) and cached thereafter.
+     * <p>
+     * This reads the actual module list rather than guessing from a name prefix (anything starting with
+     * {@code java.}/{@code jdk.}): which modules a JDK actually provides varies by version -
+     * {@code java.annotation}, {@code java.corba}, {@code java.xml.bind}, {@code java.xml.ws} and others
+     * existed in JDK 9/10 and were removed from JDK 11 onward, while still being published as ordinary
+     * Maven artifacts (e.g. {@code javax.annotation-api}) whose {@code Automatic-Module-Name} reuses the
+     * old JDK module name specifically so old {@code requires java.annotation;} declarations keep
+     * compiling once that jar is back on the module path. A prefix guess can't tell these apart from
+     * modules the given {@link JDK} actually provides.
      *
+     * @param jdk        the {@link JDK} whose platform modules to check against
      * @param moduleName the module name
-     * @return {@code true} if the specified module name is a {@link JavaPlatform} module, {@code false} otherwise
+     * @return {@code true} if the specified module name is a platform module of the given {@link JDK}
      */
-    public static boolean isJavaPlatformModule(final String moduleName) {
-        return !Strings.isEmpty(moduleName) && (moduleName.startsWith("java.") || moduleName.startsWith("jdk."));
+    public static boolean isJavaPlatformModule(final JDK jdk, final String moduleName) {
+        return !Strings.isEmpty(moduleName)
+            && PLATFORM_MODULES_CACHE.computeIfAbsent(jdk, JavaPlatform::readPlatformModules).contains(moduleName);
+    }
+
+    private static Set<String> readPlatformModules(final JDK jdk) {
+        final Path jmodsDir = jdk.home().path().resolve("jmods");
+
+        if (Files.isDirectory(jmodsDir)) {
+            try {
+                return JmodModuleFinder.of(jmodsDir).findAll().stream()
+                    .map(reference -> reference.descriptor().name())
+                    .collect(Collectors.toUnmodifiableSet());
+            } catch (final IOException e) {
+                // fall through -- some JDK distributions (e.g. a hosted-runner's trimmed Temurin
+                // install) omit jmods/ entirely, so an unreadable directory is treated the same as
+                // a missing one rather than failing outright
+            }
+        }
+
+        // ModuleFinder.ofSystem() only reflects the modules of the JDK Spin itself is currently
+        // running on -- a safe proxy for `jdk` ONLY when `jdk` actually is that JDK (e.g. a jlinked-down
+        // runtime image with no jmods/ of its own, still executing as this very process). For any other
+        // JDK missing jmods/ (a different major version, or one staged only for a foreign target
+        // platform), silently substituting the host's module list would misclassify that JDK's platform
+        // modules without any indication something went wrong -- fail loudly instead.
+        if (jdk.equals(JDK.current())) {
+            return ModuleFinder.ofSystem().findAll().stream()
+                .map(reference -> reference.descriptor().name())
+                .collect(Collectors.toUnmodifiableSet());
+        }
+
+        throw new IllegalStateException(
+            "Cannot determine the platform modules of Java Development Kit [" + jdk + "]: its jmods/ "
+                + "directory [" + jmodsDir + "] is missing or unreadable, and it is not the Java "
+                + "Development Kit currently executing Spin, so its module list cannot be inferred.");
     }
 
     /**
