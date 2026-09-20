@@ -83,6 +83,27 @@ public interface Project
     }
 
     /**
+     * Obtains the fully qualified name of the {@link Project}, formed from the {@link Workspace}'s
+     * {@link #name()} followed by this {@link Project}'s {@link #path()} relative to the {@link Workspace}'s
+     * own {@link #path()} - eg: {@code jeffrey/shared/ui/version}.
+     * <p>
+     * Deliberately derived from the filesystem {@link #path()} rather than {@link #hierarchy()}/
+     * {@link #parent()}: a directory with no {@link Plugin} or {@link Resource} of its own detected in it
+     * (eg: a pure aggregator {@code pom.xml} with no source of its own) never becomes a {@link Project},
+     * so {@link #parent()} skips straight over it to the nearest ancestor that did - which would make a
+     * {@link #hierarchy()}-based name just as ambiguous as {@link #name()} alone for two unrelated
+     * {@link Project}s that happen to share a simple name but sit under different such skipped ancestors.
+     *
+     * @return the fully qualified name of the {@link Project}
+     */
+    default String qualifiedName() {
+        final Project workspace = workspace();
+        final String relative = workspace.path().relativize(path()).toString().replace('\\', '/');
+
+        return relative.isEmpty() ? workspace.name() : workspace.name() + "/" + relative;
+    }
+
+    /**
      * Obtains the depth (distance) of the {@link Project} from the {@link Workspace}.
      * <p>
      * A depth of 0 means the {@link Project} is the {@link Workspace}.  A depth of 1 means the

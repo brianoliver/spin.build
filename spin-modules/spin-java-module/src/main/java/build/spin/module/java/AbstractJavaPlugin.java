@@ -197,8 +197,8 @@ public abstract class AbstractJavaPlugin
 
                 if (moduleInfoPaths.size() > 1) {
                     this.recorder.info(
-                        "[%s] has %d candidate module-info.java files %s — using [%s]",
-                        this.project.name(), moduleInfoPaths.size(), moduleInfoPaths, moduleInfoPaths.get(0));
+                        "Project [%s] has %d candidate module-info.java files %s — using [%s]",
+                        this.project.qualifiedName(), moduleInfoPaths.size(), moduleInfoPaths, moduleInfoPaths.get(0));
                 }
 
                 final String normalizedProjectName = this.project.name().replace("-", ".");
@@ -210,8 +210,8 @@ public abstract class AbstractJavaPlugin
                             return JDKModuleDescriptor.parse(this.codeModel, reader);
                         } catch (final IOException e) {
                             this.recorder.warn(e,
-                                "Failed to read [%s] for [%s]. Defaulting to an empty ModuleDescriptor.",
-                                path, this.project.name());
+                                "Failed to read [%s] for Project [%s]. Defaulting to an empty ModuleDescriptor.",
+                                path, this.project.qualifiedName());
                             return automaticDescriptor(normalizedProjectName);
                         }
                     })
@@ -221,11 +221,11 @@ public abstract class AbstractJavaPlugin
                         // is the routine, common case for a Project with no test-specific module
                         // requirements - not worth a warning on every such Project
                         final String message =
-                            "[%s] does not define a ModuleDescriptor. Defaulting to an empty ModuleDescriptor.";
+                            "Project [%s] does not define a ModuleDescriptor. Defaulting to an empty ModuleDescriptor.";
                         if (sourceScope() == SourcePathKind.TEST) {
-                            this.recorder.diagnostic(message, this.project.name());
+                            this.recorder.diagnostic(message, this.project.qualifiedName());
                         } else {
-                            this.recorder.warn(message, this.project.name());
+                            this.recorder.warn(message, this.project.qualifiedName());
                         }
                         return automaticDescriptor(normalizedProjectName);
                     });
