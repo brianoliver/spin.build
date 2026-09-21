@@ -10,6 +10,7 @@ import build.base.io.PathSetBuilder;
 import build.base.option.JDKVersion;
 import build.base.telemetry.Error;
 import build.base.telemetry.Telemetry;
+import build.base.telemetry.Warning;
 import build.base.version.Version;
 import build.codemodel.foundation.CodeModel;
 import build.codemodel.foundation.descriptor.RequiresModuleDescriptor;
@@ -788,6 +789,13 @@ public class JavaProjectTests {
         final CompletableFuture<Telemetry> future = observer.when(t -> t instanceof Error);
         engine.subscribe(observer);
 
+        // record every Telemetry event emitted during the run, so we can also assert on *what
+        // wasn't* streamed live: the compile error's own line (only embedded in the eventual
+        // ProgramExecutionException, per AbstractCompile#flushError) and the UsesDeprecated.java
+        // deprecation warning (which must stream live like any other warning)
+        final RecordingSubscriber<Telemetry> recorded = new RecordingSubscriber<>();
+        engine.subscribe(recorded);
+
         try {
             program.execute(cache);
 
@@ -815,6 +823,23 @@ public class JavaProjectTests {
                 .as("expected a ProcessFailedException in the cause chain of the compile failure")
                 .isPresent();
             assertThat(pfe.get().output()).contains("Broken.java").contains("error:");
+
+            // javac's own "Broken.java...error:" line must not also be streamed live as a separate
+            // Error event -- only the one Activity-failure Error (no filenames in its description)
+            // should exist, or every diagnostic would print twice (once live, once in the message above)
+            assertThat(recorded.items().filter(t -> t instanceof Error))
+                .as("expected the compiler's error line not to be streamed as its own Error event")
+                .noneMatch(t -> t.message().contains("Broken.java"));
+
+            // UsesDeprecated.java's deprecation Note is a warning, not an error -- unlike the error
+            // above, it must be streamed live as it's seen
+            assertThat(recorded.items().filter(t -> t instanceof Warning))
+                .as("expected the deprecation warning to be streamed live")
+                .anyMatch(t -> t.message().contains("UsesDeprecated.java"));
+
+            // ... and, symmetrically, never folded into the captured failure output alongside the
+            // real compile error
+            assertThat(pfe.get().output()).doesNotContain("UsesDeprecated.java");
         }
     }
 
