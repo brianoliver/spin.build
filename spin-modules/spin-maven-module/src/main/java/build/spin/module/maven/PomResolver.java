@@ -131,14 +131,26 @@ class PomResolver {
         final List<RemoteRepo> repos = Files.exists(settingsPath)
             ? new ArrayList<>(MavenSettingsReader.read(settingsPath, recorder))
             : new ArrayList<>();
-        if (repos.isEmpty()) {
-            repos.add(RemoteRepo.of("central", "https://repo.maven.apache.org/maven2"));
-        }
+        addImplicitCentralIfAbsent(repos);
         final Optional<MavenProxy> proxy = Files.exists(settingsPath)
             ? MavenSettingsReader.readProxy(settingsPath, recorder)
             : Optional.empty();
 
         return new PomResolver(recorder, localRepo, offline, repos, proxy);
+    }
+
+    /**
+     * Adds Maven Central to {@code repos} if it isn't already present. Maven's super-POM always
+     * implicitly includes Central, in addition to whatever {@code <repositories>} settings.xml
+     * configures - it's additive, not a replacement. Without this, a settings.xml that declares any
+     * {@code <repository>} at all (even a releases-disabled snapshots-only one, as this codebase's
+     * own dev settings.xml does) would silently drop the implicit release repo, and every ordinary
+     * release-version lookup would fail with a 404 against a repo that was never going to serve it.
+     */
+    static void addImplicitCentralIfAbsent(final List<RemoteRepo> repos) {
+        if (repos.stream().noneMatch(repo -> "https://repo.maven.apache.org/maven2".equals(repo.url()))) {
+            repos.add(RemoteRepo.of("central", "https://repo.maven.apache.org/maven2"));
+        }
     }
 
     /**
@@ -493,33 +505,87 @@ class PomResolver {
         return SNAPSHOT_TTL_MS;
     }
 
+    /**
+     * The outcome of one repository's attempt in a {@link #resolveAcrossRepos} walk: either the
+     * value it produced, or a short human-readable reason it didn't (folded into the final
+     * "tried [...]" summary if every repository fails).
+     */
+    private sealed interface Attempt<T> {
+        record Success<T>(T value) implements Attempt<T> { }
+
+        record Failure<T>(String reason) implements Attempt<T> { }
+    }
+
+    /**
+     * Tries {@code relativePath} against each configured remote repository in order, via
+     * {@code attempt}, until one succeeds. Owns everything generic to that walk — the
+     * no-repos-configured fail-fast, building each repo's full URL, and (if every repository
+     * fails) a single summary warning naming what was tried against each one — so callers supply
+     * only what's specific to their request: how to interpret a 200 response, and what a
+     * non-success response means.
+     */
+    private <T> Optional<T> resolveAcrossRepos(final String relativePath,
+                                               final String subject,
+                                               final RepoAttempt<T> attempt) {
+        if (this.remoteRepos.isEmpty()) {
+            this.recorder.warn("Could not resolve %s — no remote repositories configured", subject);
+            return Optional.empty();
+        }
+
+        final List<String> attempts = new ArrayList<>();
+        for (final RemoteRepo repo : this.remoteRepos) {
+            final String url = repo.url().endsWith("/")
+                ? repo.url() + relativePath
+                : repo.url() + "/" + relativePath;
+            try {
+                final Attempt<T> outcome = attempt.tryRepo(repo, url);
+                if (outcome instanceof Attempt.Success<T> success) {
+                    return Optional.of(success.value());
+                }
+                attempts.add(repo.id() + ": " + ((Attempt.Failure<T>) outcome).reason());
+            } catch (final IOException | InterruptedException e) {
+                attempts.add(repo.id() + ": " + e.getClass().getSimpleName()
+                    + Optional.ofNullable(e.getMessage()).map(m -> " (" + m + ")").orElse(""));
+            }
+        }
+
+        this.recorder.warn("Could not resolve %s — tried %s", subject, attempts);
+        return Optional.empty();
+    }
+
+    @FunctionalInterface
+    private interface RepoAttempt<T> {
+        Attempt<T> tryRepo(RemoteRepo repo, String url) throws IOException, InterruptedException;
+    }
+
+    private HttpResponse<InputStream> get(final String url, final RemoteRepo repo)
+        throws IOException, InterruptedException {
+        final HttpRequest.Builder requestBuilder = HttpRequest.newBuilder().uri(URI.create(url)).GET();
+        repo.authHeader().ifPresent(h -> requestBuilder.header("Authorization", h));
+        return this.httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofInputStream());
+    }
+
     private Optional<String> fetchSnapshotSuffix(final Gav gav) {
         final String groupPath = gav.groupId().replace('.', '/');
         final String metaRelPath = groupPath + "/" + gav.artifactId() + "/" + gav.version() + "/maven-metadata.xml";
-        for (final RemoteRepo repo : this.remoteRepos) {
-            final String metaUrl = repo.url().endsWith("/")
-                ? repo.url() + metaRelPath
-                : repo.url() + "/" + metaRelPath;
-            try {
-                final HttpRequest.Builder rb = HttpRequest.newBuilder()
-                    .uri(URI.create(metaUrl))
-                    .GET();
-                repo.authHeader().ifPresent(h -> rb.header("Authorization", h));
-                final HttpResponse<InputStream> response = this.httpClient.send(
-                    rb.build(), HttpResponse.BodyHandlers.ofInputStream());
-                if (response.statusCode() == 200) {
-                    try (InputStream body = response.body()) {
-                        final Optional<String> suffix = SnapshotMetadataReader.parseSnapshotSuffix(body);
-                        if (suffix.isPresent()) {
-                            return suffix;
-                        }
+        final String subject = "snapshot metadata for " + gav.groupId() + ":" + gav.artifactId() + ":" + gav.version();
+
+        return resolveAcrossRepos(metaRelPath, subject, (repo, url) -> {
+            final HttpResponse<InputStream> response = get(url, repo);
+            if (response.statusCode() == 200) {
+                try (InputStream body = response.body()) {
+                    final Optional<String> suffix = SnapshotMetadataReader.parseSnapshotSuffix(body);
+                    if (suffix.isPresent()) {
+                        return new Attempt.Success<>(suffix.get());
                     }
+                    return new Attempt.Failure<>("metadata present but no snapshot suffix");
                 }
-            } catch (final IOException | InterruptedException e) {
-                this.recorder.warn(e, "Failed to fetch snapshot metadata from %s", repo.url());
             }
-        }
-        return Optional.empty();
+            if (response.statusCode() == 404) {
+                return new Attempt.Failure<>("not found (404)");
+            }
+            return new Attempt.Failure<>("HTTP " + response.statusCode());
+        });
     }
 
     private Optional<Path> downloadSnapshot(final Coordinates coords,
@@ -532,37 +598,27 @@ class PomResolver {
             + "." + coords.extension();
         final String groupPath = gav.groupId().replace('.', '/');
         final String relativePath = groupPath + "/" + gav.artifactId() + "/" + gav.version() + "/" + filename;
-        for (final RemoteRepo repo : this.remoteRepos) {
-            final String url = repo.url().endsWith("/")
-                ? repo.url() + relativePath
-                : repo.url() + "/" + relativePath;
-            try {
-                final HttpRequest.Builder rb = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .GET();
-                repo.authHeader().ifPresent(h -> rb.header("Authorization", h));
-                final HttpResponse<InputStream> response = this.httpClient.send(
-                    rb.build(), HttpResponse.BodyHandlers.ofInputStream());
-                if (response.statusCode() == 200) {
-                    Files.createDirectories(target.getParent());
-                    try (InputStream body = response.body()) {
-                        Files.copy(body, target, StandardCopyOption.REPLACE_EXISTING);
-                    }
-                    if (!verifySha1(url, target, repo)) {
-                        Files.deleteIfExists(target);
-                        continue;
-                    }
-                    this.recorder.info("Downloaded snapshot %s from %s", filename, repo.id());
-                    return Optional.of(target);
-                } else if (response.statusCode() != 404) {
-                    this.recorder.warn("HTTP %d fetching snapshot %s from %s",
-                        response.statusCode(), filename, repo.id());
+        final String subject = "snapshot " + gav.groupId() + ":" + gav.artifactId() + ":" + gav.version();
+
+        return resolveAcrossRepos(relativePath, subject, (repo, url) -> {
+            final HttpResponse<InputStream> response = get(url, repo);
+            if (response.statusCode() == 200) {
+                Files.createDirectories(target.getParent());
+                try (InputStream body = response.body()) {
+                    Files.copy(body, target, StandardCopyOption.REPLACE_EXISTING);
                 }
-            } catch (final IOException | InterruptedException e) {
-                this.recorder.warn(e, "Failed to download snapshot %s from %s", filename, repo.url());
+                if (!verifySha1(url, target, repo)) {
+                    Files.deleteIfExists(target);
+                    return new Attempt.Failure<>("checksum verification failed");
+                }
+                this.recorder.info("Downloaded snapshot %s from %s", filename, repo.id());
+                return new Attempt.Success<>(target);
             }
-        }
-        return Optional.empty();
+            if (response.statusCode() == 404) {
+                return new Attempt.Failure<>("not found (404)");
+            }
+            return new Attempt.Failure<>("HTTP " + response.statusCode());
+        });
     }
 
     private Optional<Path> download(final Coordinates coords,
@@ -572,46 +628,29 @@ class PomResolver {
         final String filename = gav.artifactId() + "-" + gav.version()
             + (classifier != null && !classifier.isEmpty() ? "-" + classifier : "")
             + "." + coords.extension();
-
         final String groupPath = gav.groupId().replace('.', '/');
         final String relativePath = groupPath + "/" + gav.artifactId() + "/" + gav.version() + "/" + filename;
+        final String subject = gav.groupId() + ":" + gav.artifactId() + ":" + gav.version() + ":" + coords.extension();
 
-        for (final RemoteRepo repo : this.remoteRepos) {
-            final String url = repo.url().endsWith("/")
-                ? repo.url() + relativePath
-                : repo.url() + "/" + relativePath;
-
-            try {
-                final HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .GET();
-
-                repo.authHeader().ifPresent(h -> requestBuilder.header("Authorization", h));
-
-                final HttpResponse<InputStream> response = this.httpClient.send(
-                    requestBuilder.build(), HttpResponse.BodyHandlers.ofInputStream());
-
-                if (response.statusCode() == 200) {
-                    Files.createDirectories(target.getParent());
-                    try (InputStream body = response.body()) {
-                        Files.copy(body, target, StandardCopyOption.REPLACE_EXISTING);
-                    }
-                    if (!verifySha1(url, target, repo)) {
-                        Files.deleteIfExists(target);
-                        continue;
-                    }
-                    this.recorder.info("Downloaded %s from %s", filename, repo.id());
-                    return Optional.of(target);
-                } else if (response.statusCode() != 404) {
-                    this.recorder.warn("HTTP %d fetching %s from %s", response.statusCode(), filename, repo.id());
+        return resolveAcrossRepos(relativePath, subject, (repo, url) -> {
+            final HttpResponse<InputStream> response = get(url, repo);
+            if (response.statusCode() == 200) {
+                Files.createDirectories(target.getParent());
+                try (InputStream body = response.body()) {
+                    Files.copy(body, target, StandardCopyOption.REPLACE_EXISTING);
                 }
-            } catch (final IOException | InterruptedException e) {
-                this.recorder.warn(e, "Failed to download %s from %s", filename, repo.url());
+                if (!verifySha1(url, target, repo)) {
+                    Files.deleteIfExists(target);
+                    return new Attempt.Failure<>("checksum verification failed");
+                }
+                this.recorder.info("Downloaded %s from %s", filename, repo.id());
+                return new Attempt.Success<>(target);
             }
-        }
-
-        this.recorder.warn("Could not resolve %s:%s:%s:%s", gav.groupId(), gav.artifactId(), gav.version(), coords.extension());
-        return Optional.empty();
+            if (response.statusCode() == 404) {
+                return new Attempt.Failure<>("not found (404)");
+            }
+            return new Attempt.Failure<>("HTTP " + response.statusCode());
+        });
     }
 
     /**

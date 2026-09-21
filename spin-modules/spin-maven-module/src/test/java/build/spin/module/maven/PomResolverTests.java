@@ -20,6 +20,8 @@ package build.spin.module.maven;
  * #L%
  */
 
+import build.base.telemetry.Telemetry;
+import build.base.telemetry.Warning;
 import build.spin.common.telemetry.TelemetryPublisher;
 import build.spin.module.modulesystem.pom.Gav;
 import org.junit.jupiter.api.Test;
@@ -39,6 +41,7 @@ import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -551,6 +554,144 @@ public class PomResolverTests {
     }
 
     /**
+     * A settings.xml that declares no repository matching Central's URL must still get Central
+     * added, exactly as before this codebase started deduplicating — the ordinary "no
+     * {@code <repositories>} at all" case.
+     */
+    @Test
+    void shouldAddImplicitCentralWhenAbsent() {
+        final List<RemoteRepo> repos = new ArrayList<>(
+            List.of(RemoteRepo.of("internal-snapshots", "https://nexus.example.com/repository/snapshots")));
+
+        PomResolver.addImplicitCentralIfAbsent(repos);
+
+        assertThat(repos)
+            .extracting(RemoteRepo::url)
+            .containsExactly(
+                "https://nexus.example.com/repository/snapshots",
+                "https://repo.maven.apache.org/maven2");
+    }
+
+    /**
+     * Regression test for the bug this diff fixes: a settings.xml that already declares a
+     * repository at Central's exact URL (e.g. a mirror re-declaring it, or — as in this codebase's
+     * own dev settings.xml — a releases-disabled snapshots-only override) must not get a second,
+     * duplicate Central entry appended.
+     */
+    @Test
+    void shouldNotDuplicateCentralWhenAlreadyPresent() {
+        final RemoteRepo existingCentral =
+            RemoteRepo.of("central-mirror", "https://repo.maven.apache.org/maven2", "never");
+        final List<RemoteRepo> repos = new ArrayList<>(List.of(existingCentral));
+
+        PomResolver.addImplicitCentralIfAbsent(repos);
+
+        assertThat(repos).containsExactly(existingCentral);
+    }
+
+    /**
+     * With no remote repositories configured at all (e.g. {@code offline=false} but an empty repo
+     * list), resolution must fail fast with a clear warning rather than attempting — and failing —
+     * an HTTP request against an empty repo list, or worse, silently returning empty with no
+     * explanation of why.
+     */
+    @Test
+    void shouldFailFastWithNoRemoteRepositoriesConfigured() {
+        final List<Telemetry> captured = new ArrayList<>();
+        final PomResolver resolver = new PomResolver(
+            new TelemetryPublisher(URI.create("maven://no-repos-test"), captured::add),
+            Path.of("."),
+            false,
+            List.of());
+
+        final Optional<Path> resolved = resolver.resolveArtifact("test:artifact:1.0");
+
+        assertThat(resolved).isEmpty();
+        assertThat(captured)
+            .filteredOn(Warning.class::isInstance)
+            .extracting(Telemetry::message)
+            .anyMatch(message -> message.contains("no remote repositories configured"));
+    }
+
+    /**
+     * When every configured repository responds 404, the final "could not resolve" warning must
+     * name each repository's outcome, so a caller doesn't have to dig through per-request logs
+     * to tell "this doesn't exist anywhere" apart from "one repo is broken."
+     */
+    @Test
+    void shouldSummarizePerRepoAttemptsWhenAllReposReturn404(@org.junit.jupiter.api.io.TempDir final Path tempDir)
+        throws IOException {
+        try (NotFoundTestRepoServer server = new NotFoundTestRepoServer()) {
+            final List<Telemetry> captured = new ArrayList<>();
+            final PomResolver resolver = new PomResolver(
+                new TelemetryPublisher(URI.create("maven://attempts-test"), captured::add),
+                tempDir,
+                false,
+                List.of(RemoteRepo.of("only-repo", "http://localhost:" + server.port())));
+
+            final Optional<Path> resolved = resolver.resolveArtifact("test:missing:1.0");
+
+            assertThat(resolved).isEmpty();
+            assertThat(captured)
+                .filteredOn(Warning.class::isInstance)
+                .extracting(Telemetry::message)
+                .anyMatch(message -> message.contains("only-repo: not found (404)"));
+        }
+    }
+
+    /**
+     * With no remote repositories configured, a SNAPSHOT resolve must fail fast with a clear
+     * warning too, not just the release-artifact path — a regression test for the fact that
+     * {@link PomResolver#fetchSnapshotSuffix} used to swallow this case silently (an empty repo
+     * list makes its own for-loop a no-op, so it returned {@code Optional#empty()} with no
+     * telemetry at all) even after the release path was already fixed to warn.
+     */
+    @Test
+    void shouldFailFastWithNoRemoteRepositoriesConfiguredForSnapshot(
+        @org.junit.jupiter.api.io.TempDir final Path tempDir) {
+        final List<Telemetry> captured = new ArrayList<>();
+        final PomResolver resolver = new PomResolver(
+            new TelemetryPublisher(URI.create("maven://no-repos-snapshot-test"), captured::add),
+            tempDir,
+            false,
+            List.of());
+
+        final Optional<Path> resolved = resolver.resolveArtifact("test:artifact:1.0-SNAPSHOT");
+
+        assertThat(resolved).isEmpty();
+        assertThat(captured)
+            .filteredOn(Warning.class::isInstance)
+            .extracting(Telemetry::message)
+            .anyMatch(message -> message.contains("no remote repositories configured"));
+    }
+
+    /**
+     * When every configured repository 404s the SNAPSHOT {@code maven-metadata.xml} request, the
+     * final warning must summarize each repository's outcome, mirroring the release-artifact
+     * summary added alongside it — same duplicated per-repo loop, same diagnostic gap.
+     */
+    @Test
+    void shouldSummarizePerRepoAttemptsWhenAllReposReturn404ForSnapshotMetadata(
+        @org.junit.jupiter.api.io.TempDir final Path tempDir) throws IOException {
+        try (NotFoundTestRepoServer server = new NotFoundTestRepoServer()) {
+            final List<Telemetry> captured = new ArrayList<>();
+            final PomResolver resolver = new PomResolver(
+                new TelemetryPublisher(URI.create("maven://snapshot-attempts-test"), captured::add),
+                tempDir,
+                false,
+                List.of(RemoteRepo.of("only-repo", "http://localhost:" + server.port())));
+
+            final Optional<Path> resolved = resolver.resolveArtifact("test:missing:1.0-SNAPSHOT");
+
+            assertThat(resolved).isEmpty();
+            assertThat(captured)
+                .filteredOn(Warning.class::isInstance)
+                .extracting(Telemetry::message)
+                .anyMatch(message -> message.contains("only-repo: not found (404)"));
+        }
+    }
+
+    /**
      * A minimal single-purpose HTTP/1.1 server (raw sockets, no JDK {@code jdk.httpserver} module
      * dependency) that serves a fixed {@code artifact-1.0.jar} body for any non-{@code .sha1}
      * request, and a {@code 500} for any {@code .sha1} request — enough to exercise checksum-sidecar
@@ -602,6 +743,62 @@ public class PomResolverTests {
                     .getBytes(StandardCharsets.US_ASCII));
                 out.write(body);
             }
+            out.flush();
+        }
+
+        @Override
+        public void close() {
+            this.running = false;
+            try {
+                this.serverSocket.close();
+            } catch (final IOException ignored) {
+                // best-effort shutdown
+            }
+        }
+    }
+
+    /**
+     * A minimal single-purpose HTTP/1.1 server that returns {@code 404} for every request, modeling
+     * a repository that simply doesn't have the requested artifact.
+     */
+    private static final class NotFoundTestRepoServer implements AutoCloseable {
+
+        private final ServerSocket serverSocket;
+        private final Thread thread;
+        private volatile boolean running = true;
+
+        NotFoundTestRepoServer() throws IOException {
+            this.serverSocket = new ServerSocket(0, 0, InetAddress.getLoopbackAddress());
+            this.thread = new Thread(this::serve);
+            this.thread.setDaemon(true);
+            this.thread.start();
+        }
+
+        int port() {
+            return this.serverSocket.getLocalPort();
+        }
+
+        private void serve() {
+            while (this.running) {
+                try (Socket socket = this.serverSocket.accept()) {
+                    handle(socket);
+                } catch (final IOException e) {
+                    // expected once close() closes the server socket to unblock accept()
+                }
+            }
+        }
+
+        private static void handle(final Socket socket) throws IOException {
+            final BufferedReader in = new BufferedReader(
+                new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII));
+            in.readLine(); // request line, unused: every request gets 404 regardless of path
+            String header;
+            while ((header = in.readLine()) != null && !header.isEmpty()) {
+                // discard request headers
+            }
+            final OutputStream out = socket.getOutputStream();
+            out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                .getBytes(StandardCharsets.US_ASCII));
             out.flush();
         }
 
