@@ -147,8 +147,109 @@ public class JavaProjectTests {
         assertThat(contents).contains("-version");
         assertThat(contents).contains("-nodeprecated");
 
-        // ... and sets enable-preview to false, overriding the default (enabled) behavior
+        // ... and sets enable-preview to false explicitly, matching the (disabled) default
         assertThat(contents).doesNotContain("--enable-preview");
+    }
+
+    @Test
+    @WorkspacePath("pom-based")
+    void shouldNotEnablePreviewForCompileByDefault(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        // the "pom-based" fixture's pom.xml declares no <enablePreview>, and no .spin/ config
+        // overrides it -- --enable-preview must never be forced unconditionally for a modular
+        // compile (that was the bug: it used to be forced for every modular JDKVersion).
+        engine.createProgram(workspace, Task.Pattern.of("compile")).execute(DefaultAssetCache.create());
+
+        assertThat(Files.readString(findArgumentsFile(workspace, "arguments-")))
+            .doesNotContain("--enable-preview");
+
+        // javadoc has the identical bug/fix (AbstractJavaDoc mirrors AbstractCompile) -- same fixture,
+        // same "no signal anywhere" case, must default to off there too.
+        engine.createProgram(workspace, Task.Pattern.of("javadoc")).execute(DefaultAssetCache.create());
+
+        assertThat(Files.readString(findArgumentsFile(workspace, "arguments-javadoc-")))
+            .doesNotContain("--enable-preview");
+    }
+
+    @Test
+    @WorkspacePath("compile-enable-preview-pom")
+    void shouldEnablePreviewForCompileWhenPomDeclaresIt(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        // pom.xml declares <enablePreview>true</enablePreview> on maven-compiler-plugin; with no
+        // .spin/ config present, PomBasedCompilerArguments#enablePreview is the only signal and must
+        // be honored.
+        engine.createProgram(workspace, Task.Pattern.of("compile")).execute(DefaultAssetCache.create());
+
+        assertThat(Files.readString(findArgumentsFile(workspace, "arguments-")))
+            .contains("--enable-preview");
+
+        // maven-javadoc-plugin has no <enablePreview> parameter of its own -- this fixture's pom
+        // spells it out via <additionalJOptions><additionalJOption>--enable-preview</...>, which
+        // PomBasedJavadocArguments passes through verbatim (see AbstractJavaDoc/toArgs).
+        engine.createProgram(workspace, Task.Pattern.of("javadoc")).execute(DefaultAssetCache.create());
+
+        assertThat(Files.readString(findArgumentsFile(workspace, "arguments-javadoc-")))
+            .contains("--enable-preview");
+    }
+
+    @Test
+    @WorkspacePath("compile-enable-preview-config")
+    void shouldEnablePreviewForCompileViaSpinNativeConfigWithNoPom(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        // no pom.xml at all -- CompilerArguments never resolves for this project, so the only way
+        // to opt into --enable-preview is the .spin/build.spin.module.compile.properties config
+        // this fixture sets (enable-preview = true). Locks in that a pure spin-native project has a
+        // path to preview features that doesn't depend on Maven metadata.
+        engine.createProgram(workspace, Task.Pattern.of("compile")).execute(DefaultAssetCache.create());
+
+        assertThat(Files.readString(findArgumentsFile(workspace, "arguments-")))
+            .contains("--enable-preview");
+
+        // the fixture's .spin/build.spin.module.javadoc.properties also sets enable-preview = true,
+        // exercising the same "no pom, .spin/-only" path for AbstractJavaDoc's own @Source-scoped config.
+        engine.createProgram(workspace, Task.Pattern.of("javadoc")).execute(DefaultAssetCache.create());
+
+        assertThat(Files.readString(findArgumentsFile(workspace, "arguments-javadoc-")))
+            .contains("--enable-preview");
+    }
+
+    @Test
+    @WorkspacePath("compile-enable-preview-override")
+    void shouldPreferSpinNativeConfigOverPomForCompileEnablePreview(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        // pom.xml declares <enablePreview>true</enablePreview>, but .spin/build.spin.module.compile
+        // .properties explicitly sets enable-preview = false -- an explicit .spin/ config value must
+        // win over what the pom says, not merely be OR'd alongside it.
+        engine.createProgram(workspace, Task.Pattern.of("compile")).execute(DefaultAssetCache.create());
+
+        assertThat(Files.readString(findArgumentsFile(workspace, "arguments-")))
+            .doesNotContain("--enable-preview");
+
+        // the fixture's .spin/build.spin.module.javadoc.properties also sets enable-preview = false,
+        // against the same pom's <enablePreview>true</enablePreview> -- the .spin/ override must win
+        // for javadoc too, not just compile.
+        engine.createProgram(workspace, Task.Pattern.of("javadoc")).execute(DefaultAssetCache.create());
+
+        assertThat(Files.readString(findArgumentsFile(workspace, "arguments-javadoc-")))
+            .doesNotContain("--enable-preview");
+    }
+
+    /**
+     * Locates the single {@code .build/<prefix>*} arguments file javac/javadoc was invoked with.
+     */
+    private static Path findArgumentsFile(final Workspace workspace, final String prefix) throws IOException {
+        final Path buildPath = workspace.path().resolve(".build");
+        try (var files = Files.list(buildPath)) {
+            return files
+                .filter(path -> path.getFileName().toString().startsWith(prefix))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(
+                    "Expected a " + prefix + "* file in [" + buildPath + "]"));
+        }
     }
 
     @Test

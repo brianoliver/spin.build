@@ -23,6 +23,7 @@ package build.spin.module.modulesystem;
 import build.spin.Project;
 import build.spin.Resource;
 
+import java.util.Optional;
 import java.util.stream.Stream;
 
 /**
@@ -45,4 +46,15 @@ public interface CompilerArguments
      * compiler arguments.
      */
     Stream<String> get(Project project);
+
+    /**
+     * Returns whether the given {@link Project} declares an explicit preference for
+     * {@code --enable-preview}, independent of {@link #get(Project)}'s opaque token stream — callers
+     * that also have their own (e.g. spin-native config-driven) opinion on preview features need this
+     * as one input to combine, not silently baked into a stream they can't selectively override.
+     * Empty when the project declares no preference either way.
+     */
+    default Optional<Boolean> enablePreview(final Project project) {
+        return Optional.empty();
+    }
 }

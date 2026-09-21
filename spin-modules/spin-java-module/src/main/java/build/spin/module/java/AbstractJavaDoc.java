@@ -175,6 +175,14 @@ public abstract class AbstractJavaDoc
             throw new RuntimeException("Failed to create documentation target [" + targetPath + "]", e);
         }
 
+        // --enable-preview: honors an explicit .spin/ config value, otherwise off. Never forced
+        // unconditionally -- that would both reject projects pinned to an older --release and
+        // enable preview-feature warnings/behavior for projects that never asked for it. Unlike
+        // AbstractCompile, there's no pom-declared fallback here: maven-javadoc-plugin has no
+        // <enablePreview> parameter of its own (a pom spells it out via <additionalJOptions>
+        // instead, passed through verbatim below).
+        final boolean previewEnabled = this.enablePreview.orElse(false);
+
         // create an "argument" file for "javadoc"
         // include the version number in the arguments file name
         // (so we can tell the arguments being used to compile with this plugin)
@@ -207,7 +215,7 @@ public abstract class AbstractJavaDoc
             // pin the release; --release and --enable-preview are Java 9+ only
             if (this.javaVersion.isModular()) {
                 writer.println("--release " + this.javaVersion.major());
-                if (this.enablePreview.orElse(true)) {
+                if (previewEnabled) {
                     writer.println("--enable-preview");
                 }
             } else {

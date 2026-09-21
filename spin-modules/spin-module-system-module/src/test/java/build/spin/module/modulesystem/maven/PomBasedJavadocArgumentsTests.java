@@ -103,6 +103,37 @@ class PomBasedJavadocArgumentsTests {
     }
 
     // -------------------------------------------------------------------------
+    // additionalJOptions -- a distinct, real maven-javadoc-plugin parameter (options passed
+    // straight to the javadoc tool, not the doclet); this is how a pom typically spells
+    // --enable-preview for javadoc, since there's no dedicated <enablePreview> parameter on
+    // maven-javadoc-plugin the way there is on maven-compiler-plugin.
+    // -------------------------------------------------------------------------
+
+    @Test
+    void toArgs_additionalJOptions_childListForm() {
+        final ConfigNode additionalJOptions = container("additionalJOptions",
+            leaf("additionalJOption", "--enable-preview"));
+        assertThat(subject.toArgs(container(additionalJOptions)).toList())
+            .containsExactly("--enable-preview");
+    }
+
+    @Test
+    void toArgs_additionalJOptions_flatTextForm() {
+        final ConfigNode additionalJOptions = leaf("additionalJOptions", "--enable-preview -Xmaxwarns 10");
+        assertThat(subject.toArgs(container(additionalJOptions)).toList())
+            .containsExactly("--enable-preview", "-Xmaxwarns", "10");
+    }
+
+    @Test
+    void toArgs_additionalOptionsAndAdditionalJOptions_bothEmittedInOrder() {
+        final ConfigNode additionalOptions = container("additionalOptions", leaf("additionalOption", "-quiet"));
+        final ConfigNode additionalJOptions = container("additionalJOptions",
+            leaf("additionalJOption", "--enable-preview"));
+        assertThat(subject.toArgs(container(additionalOptions, additionalJOptions)).toList())
+            .containsExactly("-quiet", "--enable-preview");
+    }
+
+    // -------------------------------------------------------------------------
     // helpers
     // -------------------------------------------------------------------------
 

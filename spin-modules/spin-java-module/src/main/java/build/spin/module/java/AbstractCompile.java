@@ -49,6 +49,8 @@ import build.spin.common.ProcessFailedException;
 import build.spin.common.ProcessRunner;
 import build.spin.common.reactive.ConditionalConsumingObserver;
 import build.spin.common.task.SourcePathKind;
+import build.spin.module.configuration.Configuration;
+import build.spin.module.configuration.Source;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.CompilationResolution;
 import build.spin.module.modulesystem.CompilerArguments;
@@ -58,6 +60,7 @@ import build.spin.option.BuildDirectoryName;
 import build.spin.option.ReuseExternalBuildOutput;
 import build.spin.option.TargetDirectoryName;
 import jakarta.inject.Inject;
+import jakarta.inject.Named;
 
 import java.io.File;
 import java.io.IOException;
@@ -65,6 +68,7 @@ import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
@@ -78,8 +82,11 @@ import static build.spin.module.clean.CleanPlugin.delete;
  * @author brian.oliver
  * @since Oct-2019
  */
+@Source(AbstractCompile.CONFIGURATION_SOURCE)
 public abstract class AbstractCompile
     implements Task<PathSet> {
+
+    static final String CONFIGURATION_SOURCE = "build.spin.module.compile";
 
     private static final String GENERATED_SOURCES_PATH =
         SourcePathKind.MAIN.outputPrefix().orElseThrow() + "generated-sources";
@@ -133,6 +140,11 @@ public abstract class AbstractCompile
 
     @Inject
     private TargetDirectoryName targetDirectoryName;
+
+    @Inject
+    @Configuration
+    @Named("enable-preview")
+    private Optional<Boolean> enablePreviewOverride;
 
     private String buildProcessorModulePath() {
         return AnnotationProcessorPaths.build(
@@ -326,6 +338,22 @@ public abstract class AbstractCompile
         // create an "argument" file for "javac"
         // include the version number in the arguments file name
         // (so we can tell the arguments being used to compile with this plugin)
+        // a project's own maven-compiler-plugin config (<release>, <compilerArgs>, ...) always
+        // wins over / augments the compiler plugin's own javaVersion -- fetch it up front so it
+        // can be appended verbatim below.
+        final Optional<CompilerArguments> compilerArguments = this.project.findResource(CompilerArguments.class);
+        final var projectCompilerArgs = compilerArguments
+            .map(args -> args.get(this.project).toList())
+            .orElse(List.of());
+
+        // --enable-preview: an explicit .spin/ config value always wins; otherwise fall back to the
+        // project's own pom-declared <enablePreview>; otherwise off. Never forced unconditionally --
+        // that would both reject projects pinned to an older --release and enable preview-feature
+        // warnings/behavior for projects that never asked for it.
+        final boolean enablePreview = this.enablePreviewOverride
+            .or(() -> compilerArguments.flatMap(args -> args.enablePreview(this.project)))
+            .orElse(false);
+
         final Path arguments = buildPath.resolve("arguments-" + this.javaVersion.major());
         try (PrintWriter writer = new PrintWriter(Files.newBufferedWriter(arguments))) {
             // include the "javac" options
@@ -342,7 +370,9 @@ public abstract class AbstractCompile
             // pin the release; --release and --enable-preview are Java 9+ only
             if (this.javaVersion.isModular()) {
                 writer.println("--release " + this.javaVersion.major());
-                writer.println("--enable-preview");
+                if (enablePreview) {
+                    writer.println("--enable-preview");
+                }
             } else {
                 writer.println("-source " + this.javaVersion.major());
                 writer.println("-target " + this.javaVersion.major());
@@ -398,11 +428,9 @@ public abstract class AbstractCompile
                 writer.println("-s " + Strings.doubleQuoteIfContainsWhiteSpace(generatedSources.toString()));
             }
 
-            // include any project-declared javac args (e.g. --release N, --enable-preview,
-            // <compilerArgs> from maven-compiler-plugin). Resource is workspace-scoped and
-            // resolves the per-project effective pom.
-            this.project.findResource(CompilerArguments.class).ifPresent(args ->
-                args.get(this.project).forEach(writer::println));
+            // include any project-declared javac args (e.g. --release N, <compilerArgs> from
+            // maven-compiler-plugin), fetched above.
+            projectCompilerArgs.forEach(writer::println);
 
             // lastly include the source code to compile
             effectiveSourceCode.stream()
