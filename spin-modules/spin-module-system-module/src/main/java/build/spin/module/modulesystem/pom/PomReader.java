@@ -185,6 +185,8 @@ public final class PomReader {
         effectiveProps.put("project.artifactId", artifactId);
         effectiveProps.put("project.version", version);
         effectiveProps.put("project.basedir", pomPath.getParent().toString());
+        // Maven also recognizes the bare (unprefixed) built-in alongside "project.basedir".
+        effectiveProps.put("basedir", pomPath.getParent().toString());
         // <build><directory> / <build><finalName>: this pom's own explicit value if it declares
         // one (Maven's defaults of <basedir>/target and ${artifactId}-${version} otherwise) --
         // seeded unconditionally (like project.basedir above), so a value inherited from the
@@ -200,6 +202,11 @@ public final class PomReader {
             ? interpolate(raw.buildFinalName, effectiveProps)
             : artifactId + "-" + version);
         effectiveProps.put("settings.localRepository", this.localRepository.toString());
+        parent.ifPresent(p -> {
+            effectiveProps.put("project.parent.groupId", p.groupId());
+            effectiveProps.put("project.parent.artifactId", p.artifactId());
+            effectiveProps.put("project.parent.version", p.version());
+        });
 
         // active profiles: their <properties> apply at lower precedence than the pom's own
         final List<RawProfile> activeProfiles = evaluateActiveProfiles(raw.profiles);
@@ -599,8 +606,8 @@ public final class PomReader {
      * dependencyManagement" semantics.
      */
     private static Dependency toEffectiveDependency(final RawDependency rd,
-                                                     final Map<String, String> props,
-                                                     final Map<GA, Dependency> mgmt) {
+                                                    final Map<String, String> props,
+                                                    final Map<GA, Dependency> mgmt) {
         final String groupId = interpolate(rd.gav().groupId(), props);
         final String artifactId = interpolate(rd.gav().artifactId(), props);
         final Dependency managed = mgmt.get(new GA(groupId, artifactId));
@@ -911,7 +918,7 @@ public final class PomReader {
      * {@code <dependencyManagement>}) can appear at most once, so callers only ever want the first.
      */
     private static Optional<Element> directChild(final Element parent,
-                                                  final String tagName) {
+                                                 final String tagName) {
         final List<Element> children = directChildren(parent, tagName);
         return children.isEmpty() ? Optional.empty() : Optional.of(children.get(0));
     }
