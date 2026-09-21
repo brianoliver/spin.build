@@ -43,7 +43,14 @@ import java.util.stream.Stream;
  *   <li>{@code <additionalOptions>} — accepts both shapes used in real-world poms:
  *       a list of {@code <additionalOption>} children (each child's text becomes one token), or
  *       a flat text value that is whitespace-split into tokens</li>
+ *   <li>{@code <additionalJOptions>} — the same two shapes, wrapping {@code <additionalJOption>}
+ *       children; a distinct, equally real maven-javadoc-plugin parameter (options passed straight
+ *       to the underlying {@code javadoc} tool, as opposed to {@code <additionalOptions>}'s doclet
+ *       options) — this is how a pom typically spells {@code --enable-preview} for javadoc</li>
  * </ul>
+ * Unlike {@code maven-compiler-plugin}, {@code maven-javadoc-plugin} has no {@code <enablePreview>}
+ * parameter of its own — {@code --enable-preview} for javadoc is spelled out explicitly via
+ * {@code <additionalJOptions>} above.
  *
  * @author reed.vonredwitz
  * @since Apr-2026
@@ -66,19 +73,23 @@ public class PomBasedJavadocArguments
             config.flagIfPresent("release", "--release"),
             hasRelease ? Stream.<String>empty() : config.flagIfPresent("source", "-source"),
             config.textChild("doclint").map(v -> "-Xdoclint:" + v).stream(),
-            additionalOptions(config)
+            additionalOptions(config, "additionalOptions", "additionalOption"),
+            additionalOptions(config, "additionalJOptions", "additionalJOption")
         ).flatMap(s -> s);
     }
 
     /**
-     * Reads {@code <additionalOptions>} in both shapes used in real-world poms: a list of
-     * {@code <additionalOption>} children (each child's text becomes one token), or a flat text
-     * value that is whitespace-split into tokens.
+     * Reads {@code <containerName>} in both shapes used in real-world poms: a list of
+     * {@code <childName>} children (each child's text becomes one token), or a flat text value
+     * that is whitespace-split into tokens. Shared by {@code <additionalOptions>}/
+     * {@code <additionalOption>} and {@code <additionalJOptions>}/{@code <additionalJOption>}.
      */
-    private static Stream<String> additionalOptions(final ConfigNode config) {
-        return config.child("additionalOptions").stream().flatMap(opts -> {
+    private static Stream<String> additionalOptions(final ConfigNode config,
+                                                     final String containerName,
+                                                     final String childName) {
+        return config.child(containerName).stream().flatMap(opts -> {
             final Stream<String> childForm = opts.children().stream()
-                .filter(c -> "additionalOption".equals(c.name()))
+                .filter(c -> childName.equals(c.name()))
                 .map(ConfigNode::text)
                 .flatMap(Optional::stream);
             if (!opts.children().isEmpty()) {
