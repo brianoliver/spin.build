@@ -71,6 +71,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -443,51 +444,12 @@ public abstract class AbstractCompile
         final JDKHome javaHome = this.javaDevelopmentKit.home();
 
         // establish the StandardOutputObserver to observe and translate "javac" verbose output into Telemetry
-        final AtomicInteger parseCount = new AtomicInteger(0);
-        final AtomicInteger checkingCount = new AtomicInteger(0);
-
-        final Capture<Meter> compiling = Capture.empty();
-        final Capture<Activity> parsing = Capture.empty();
-
-        final String parsingPrefix = "[parsing started";
-        final String compilingPrefix = "[checking ";
-
         // a Capture for the last error message
         final Capture<String> error = Capture.empty();
         final ErrorCapture captured = new ErrorCapture();
 
-        final ConditionalConsumingObserver<String> observer = ConditionalConsumingObserver.Builder.<String>create()
-            .with(string -> string.startsWith(parsingPrefix), __ -> {
-                if (parseCount.getAndIncrement() == 0) {
-                    parsing.set(this.recorder.commence("Parsing"));
-                }
-            })
-            .with(string -> string.startsWith(compilingPrefix), string -> {
-                if (checkingCount.getAndIncrement() == 0) {
-                    parsing.ifPresent(Activity::complete);
-                    compiling.set(this.recorder.commence(parseCount.get(), "Checking"));
-                } else {
-                    compiling.ifPresent(meter ->
-                        meter.progress("Checking [%s]",
-                            string.substring(parsingPrefix.length(), string.length() - 1)));
-                }
-            })
-            .with(string -> string.startsWith("[total"), __ -> {
-                parsing.ifPresent(Activity::complete);
-                compiling.ifPresent(Meter::complete);
-            })
-            .with(string -> !string.startsWith("["), string -> {
-                // capture the error
-                if (error.isPresent()) {
-                    error.set(error.get() + "\n" + string);
-                } else {
-                    error.set(string);
-                }
-            })
-            .with(string -> string.startsWith("["), string -> {
-                flushError(error, captured);
-            })
-            .build();
+        final ConditionalConsumingObserver<String> observer =
+            buildOutputObserver(this.recorder, error, captured, this::flushError);
 
         // the "javac" arguments — shared by both the in-process and forked launch paths below, so
         // argument-building never diverges between them
@@ -576,6 +538,57 @@ public abstract class AbstractCompile
 
     void flushError(final Capture<String> error, final ErrorCapture captured) {
         flushError(error, captured, this.project.path(), this.recorder);
+    }
+
+    // package-private and static so it can be unit-tested without standing up an AbstractCompile;
+    // onFlush is invoked instead of calling flushError directly so the "[" branch below exercises
+    // the caller's own error-relativizing/warn-vs-capture logic rather than a hardcoded one.
+    static ConditionalConsumingObserver<String> buildOutputObserver(final TelemetryRecorder recorder,
+                                                                    final Capture<String> error,
+                                                                    final ErrorCapture captured,
+                                                                    final BiConsumer<Capture<String>, ErrorCapture> onFlush) {
+
+        final AtomicInteger parseCount = new AtomicInteger(0);
+        final AtomicInteger checkingCount = new AtomicInteger(0);
+
+        final Capture<Meter> compiling = Capture.empty();
+        final Capture<Activity> parsing = Capture.empty();
+
+        final String parsingPrefix = "[parsing started";
+        final String compilingPrefix = "[checking ";
+
+        return ConditionalConsumingObserver.Builder.<String>create()
+            .with(string -> string.startsWith(parsingPrefix), __ -> {
+                if (parseCount.getAndIncrement() == 0) {
+                    parsing.set(recorder.commence("Parsing"));
+                }
+            })
+            .with(string -> string.startsWith(compilingPrefix), string -> {
+                if (checkingCount.getAndIncrement() == 0) {
+                    parsing.ifPresent(Activity::complete);
+                    compiling.set(recorder.commence(parseCount.get(), "Checking"));
+                } else {
+                    compiling.ifPresent(meter ->
+                        meter.progress("Checking [%s]",
+                            string.substring(compilingPrefix.length(), string.length() - 1)));
+                }
+            })
+            .with(string -> string.startsWith("[total"), __ -> {
+                parsing.ifPresent(Activity::complete);
+                compiling.ifPresent(Meter::complete);
+            })
+            .with(string -> !string.startsWith("["), string -> {
+                // capture the error
+                if (error.isPresent()) {
+                    error.set(error.get() + "\n" + string);
+                } else {
+                    error.set(string);
+                }
+            })
+            .with(string -> string.startsWith("["), string -> {
+                onFlush.accept(error, captured);
+            })
+            .build();
     }
 
     // package-private and static so it can be unit-tested without standing up an AbstractCompile
