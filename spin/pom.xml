@@ -155,6 +155,26 @@
     </dependencies>
 
     <build>
+        <pluginManagement>
+            <plugins>
+                <!-- shared config for every percolate-maven-exec-plugin execution of spin1
+                     below (the self-hosting pipeline and the -Pspin-dev loop): same launch
+                     target, only phase/arguments/debug differ per execution -->
+                <plugin>
+                    <groupId>build.percolate</groupId>
+                    <artifactId>percolate-maven-exec-plugin</artifactId>
+                    <version>${percolate.version}</version>
+                    <configuration>
+                        <mainClass>build.spin.application.Spin</mainClass>
+                        <rootModule>build.spin.application</rootModule>
+                        <scope>runtime</scope>
+                        <additionalJvmArgs>
+                            <additionalJvmArg>--enable-preview</additionalJvmArg>
+                        </additionalJvmArgs>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -195,7 +215,6 @@
             <plugin>
                 <groupId>build.percolate</groupId>
                 <artifactId>percolate-maven-exec-plugin</artifactId>
-                <version>${percolate.version}</version>
                 <executions>
                     <!-- Maven builds spin₁; spin₁ builds spin₂ (jlink image) -->
                     <execution>
@@ -205,14 +224,6 @@
                             <goal>exec</goal>
                         </goals>
                         <configuration>
-                            <mainClass>build.spin.application.Spin</mainClass>
-                            <rootModule>build.spin.application</rootModule>
-                            <scope>runtime</scope>
-                            <additionalJvmArgs>
-                                <additionalJvmArg>--enable-preview</additionalJvmArg>
-                                <!--uncomment this to easily debug the build-->
-                                <!--<additionalJvmArg>-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=*:5005</additionalJvmArg>-->
-                            </additionalJvmArgs>
                             <arguments>
                                 <argument>clean</argument>
                                 <argument>jlink</argument>
@@ -265,4 +276,71 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!--
+      Dev-loop launcher: runs the *current* (uninstalled, un-jlinked) spin1 sources directly,
+      instead of the self-hosting spin1-build-spin2-build-spin3 pipeline above (which always
+      hardcodes "clean jlink -jlink-host-only -reuse-external-build-output" and requires a
+      full install to try out). Off by default; invoke explicitly with -Pspin-dev.
+
+      Usage, from the spin.build root:
+          ./mvnw -pl spin -am compile -Pspin-dev -Dpercolate.exec.args="-w /path/to/project jdeps"
+
+      -am rebuilds only the spin.build modules actually touched; binding to the compile phase
+      (rather than prepare-package) means it runs right after compilation, skipping
+      test-compile/test/package entirely. percolate.exec.args takes whatever spin task-line
+      you'd normally pass on the command line, verbatim.
+    -->
+        <profile>
+            <id>spin-dev</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>build.percolate</groupId>
+                        <artifactId>percolate-maven-exec-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>spin-dev</id>
+                                <phase>compile</phase>
+                                <goals>
+                                    <goal>exec</goal>
+                                </goals>
+                                <!-- mainClass/rootModule/scope/additionalJvmArgs come from
+                                     pluginManagement above; no hardcoded <arguments> - always
+                                     supplied via -Dpercolate.exec.args at invocation time -->
+                                <configuration>
+                                    <!-- Unlike the spin1-build-spin2 execution below (which relies
+                                         on the default cwd == this module's basedir to target the
+                                         spin project itself), this execution's -w is always
+                                         supplied explicitly by the caller, relative to wherever
+                                         ./mvnw was invoked - so pin cwd to the reactor root to
+                                         match that expectation. -->
+                                    <workingDirectory>${maven.multiModuleProjectDirectory}</workingDirectory>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!--
+      Debug switch for BOTH percolate-maven-exec-plugin executions in this file - the
+      spin1-build-spin2 pipeline above and spin-dev above. percolate.exec.jvmArgs (see ExecMojo)
+      is a Maven property, so setting it here as a profile property satisfies it for whichever
+      execution actually runs; neither execution's <configuration> needs to know this profile
+      exists. suspend=y blocks spin1 at startup until a debugger attaches on port 5005.
+
+      Usage: add -Pdebug to either invocation, e.g.
+          ./mvnw -pl spin -am compile -Pspin-dev,debug -Dpercolate.exec.args="-w /path/to/project jdeps"
+          ./mvnw -pl spin -am prepare-package -Pdebug
+    -->
+        <profile>
+            <id>debug</id>
+            <properties>
+                <percolate.exec.jvmArgs>--enable-preview -agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=*:5005</percolate.exec.jvmArgs>
+            </properties>
+        </profile>
+    </profiles>
 </project>
