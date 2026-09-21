@@ -48,7 +48,7 @@ class PomReaderTests {
      * {@code PomReader} decided whether to apply the managed scope by comparing the
      * already-defaulted scope to the literal string {@code "compile"}, which conflated "no scope
      * declared" with "scope explicitly declared as compile" and incorrectly overrode the explicit
-     * {@code compile} with the managed {@code provided}. {@link PomReader#toEffectiveDependency}
+     * {@code compile} with the managed {@code provided}. {@code PomReader#toEffectiveDependency}
      * now checks the raw, pre-default scope text instead, so the explicit value is preserved.
      */
     @Test
@@ -382,5 +382,162 @@ class PomReaderTests {
             .orElseThrow();
         assertThat(surefire.configuration().textChild("argLine"))
             .contains("@" + childDir.resolve("target") + "/test.args");
+    }
+
+    /**
+     * A child pom's effective properties must expose its resolved parent's coordinates as
+     * {@code project.parent.groupId} / {@code project.parent.artifactId} /
+     * {@code project.parent.version}, mirroring the {@code project.groupId} /
+     * {@code project.artifactId} / {@code project.version} seeded for the pom itself.
+     */
+    @Test
+    void read_seedsProjectParentPropertiesWhenParentPresent(@TempDir final Path dir) throws Exception {
+        Files.writeString(dir.resolve("pom.xml"), """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>parent</artifactId>
+              <version>1.0.0</version>
+              <packaging>pom</packaging>
+            </project>
+            """);
+
+        final Path childDir = Files.createDirectory(dir.resolve("child"));
+        final Path childPom = childDir.resolve("pom.xml");
+        Files.writeString(childPom, """
+            <project>
+              <parent>
+                <groupId>com.example</groupId>
+                <artifactId>parent</artifactId>
+                <version>1.0.0</version>
+                <relativePath>../pom.xml</relativePath>
+              </parent>
+              <artifactId>child</artifactId>
+            </project>
+            """);
+
+        final PomReader reader = new PomReader(dir, RECORDER);
+        final Optional<Pom> pom = reader.read(childPom);
+
+        assertThat(pom).isPresent();
+        assertThat(pom.get().properties())
+            .containsEntry("project.parent.groupId", "com.example")
+            .containsEntry("project.parent.artifactId", "parent")
+            .containsEntry("project.parent.version", "1.0.0");
+    }
+
+    /**
+     * A pom with no {@code <parent>} must not fabricate {@code project.parent.*} properties —
+     * unlike {@code project.groupId} etc., which always have a value, these are only meaningful
+     * when a parent actually exists.
+     */
+    @Test
+    void read_omitsProjectParentPropertiesWhenNoParent(@TempDir final Path dir) throws Exception {
+        final Path pomXml = dir.resolve("pom.xml");
+        Files.writeString(pomXml, """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>standalone</artifactId>
+              <version>1.0.0</version>
+            </project>
+            """);
+
+        final PomReader reader = new PomReader(dir, RECORDER);
+        final Optional<Pom> pom = reader.read(pomXml);
+
+        assertThat(pom).isPresent();
+        assertThat(pom.get().properties())
+            .doesNotContainKeys("project.parent.groupId", "project.parent.artifactId", "project.parent.version");
+    }
+
+    /**
+     * Regression companion to {@link #read_interpolatesProjectBuildDirectoryInPluginConfiguration}:
+     * a plugin {@code <configuration>} referencing {@code ${project.parent.version}} must come back
+     * fully interpolated rather than carrying the literal placeholder through.
+     */
+    @Test
+    void read_interpolatesProjectParentVersionInPluginConfiguration(@TempDir final Path dir) throws Exception {
+        Files.writeString(dir.resolve("pom.xml"), """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>parent</artifactId>
+              <version>3.4.5</version>
+              <packaging>pom</packaging>
+            </project>
+            """);
+
+        final Path childDir = Files.createDirectory(dir.resolve("child"));
+        final Path childPom = childDir.resolve("pom.xml");
+        Files.writeString(childPom, """
+            <project>
+              <parent>
+                <groupId>com.example</groupId>
+                <artifactId>parent</artifactId>
+                <version>3.4.5</version>
+                <relativePath>../pom.xml</relativePath>
+              </parent>
+              <artifactId>child</artifactId>
+              <build>
+                <plugins>
+                  <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <configuration>
+                      <argLine>-Dparent.version=${project.parent.version}</argLine>
+                    </configuration>
+                  </plugin>
+                </plugins>
+              </build>
+            </project>
+            """);
+
+        final PomReader reader = new PomReader(dir, RECORDER);
+        final Optional<Pom> pom = reader.read(childPom);
+
+        assertThat(pom).isPresent();
+        final Plugin surefire = pom.get()
+            .plugin(new GA("org.apache.maven.plugins", "maven-surefire-plugin"))
+            .orElseThrow();
+        assertThat(surefire.configuration().textChild("argLine"))
+            .contains("-Dparent.version=3.4.5");
+    }
+
+    /**
+     * Maven recognizes the bare {@code ${basedir}} built-in alongside the {@code project.}-prefixed
+     * form. A plugin {@code <configuration>} referencing {@code ${basedir}} (as this repo's own root
+     * {@code pom.xml} does for {@code maven-resources-plugin}'s {@code <outputDirectory>}) must
+     * interpolate to the pom's directory, not carry the literal placeholder through.
+     */
+    @Test
+    void read_interpolatesBareBasedirInPluginConfiguration(@TempDir final Path dir) throws Exception {
+        final Path pomXml = dir.resolve("pom.xml");
+        Files.writeString(pomXml, """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>consumer</artifactId>
+              <version>1.0.0</version>
+              <build>
+                <plugins>
+                  <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-resources-plugin</artifactId>
+                    <configuration>
+                      <outputDirectory>${basedir}/target/classes</outputDirectory>
+                    </configuration>
+                  </plugin>
+                </plugins>
+              </build>
+            </project>
+            """);
+
+        final PomReader reader = new PomReader(dir, RECORDER);
+        final Optional<Pom> pom = reader.read(pomXml);
+
+        assertThat(pom).isPresent();
+        final Plugin resourcesPlugin = pom.get()
+            .plugin(new GA("org.apache.maven.plugins", "maven-resources-plugin"))
+            .orElseThrow();
+
+        assertThat(resourcesPlugin.configuration().textChild("outputDirectory"))
+            .contains(dir.resolve("target/classes").toString());
     }
 }
