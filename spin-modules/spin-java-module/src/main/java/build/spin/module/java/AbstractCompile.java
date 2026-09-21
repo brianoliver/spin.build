@@ -588,7 +588,11 @@ public abstract class AbstractCompile
             if (ErrorCapture.isJavacWarning(relativized)) {
                 recorder.warn(relativized);
             } else {
-                recorder.error(relativized);
+                // captured only, not streamed live via recorder.error() - it's embedded verbatim in
+                // the eventual ProgramExecutionException message (see DefaultProgram#runTask), so
+                // streaming it here too would print every javac diagnostic twice: once as it's
+                // captured, and again in the final failure report. CheckstylePlugin.Checkstyle#check
+                // follows the same capture-only pattern for violations, for the same reason.
                 captured.append(relativized);
             }
         });

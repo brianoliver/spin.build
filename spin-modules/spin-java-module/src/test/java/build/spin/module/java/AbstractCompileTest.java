@@ -22,7 +22,6 @@ package build.spin.module.java;
 
 import build.base.foundation.Capture;
 import build.base.foundation.UniformResource;
-import build.base.telemetry.Error;
 import build.base.telemetry.Telemetry;
 import build.base.telemetry.TelemetryRecorder;
 import build.base.telemetry.Warning;
@@ -71,19 +70,20 @@ class AbstractCompileTest {
     // --- flushError ---
     //
     // javac reports source paths absolutely; flushError strips the project root and routes the
-    // trailing line to warn vs error (appending only errors to the captured failure output). It
-    // clears the Capture unconditionally, so a second call for the same flush is a no-op.
+    // trailing line to warn vs error. Errors are appended to the captured failure output only, not
+    // streamed live via recorder.error() -- the captured output is embedded verbatim in the eventual
+    // ProcessFailedException, so streaming here too would print every diagnostic twice. It clears the
+    // Capture unconditionally, so a second call for the same flush is a no-op.
 
     @Test
-    void flushError_pendingErrorLine_logsErrorAndAppendsToCaptured() {
+    void flushError_pendingErrorLine_appendsToCapturedWithoutStreaming() {
         final List<Telemetry> emitted = new ArrayList<>();
         final Capture<String> error = Capture.of(tempDir.resolve("Foo.java") + ": error: cannot find symbol");
         final ErrorCapture captured = new ErrorCapture();
 
         AbstractCompile.flushError(error, captured, tempDir, capturingRecorder(emitted));
 
-        assertThat(emitted).hasSize(1);
-        assertThat(emitted.get(0)).isInstanceOf(Error.class);
+        assertThat(emitted).isEmpty();
         assertThat(captured.output()).isEqualTo("Foo.java: error: cannot find symbol");
         assertThat(error.isPresent()).isFalse();
     }
@@ -111,7 +111,7 @@ class AbstractCompileTest {
     }
 
     @Test
-    void flushError_calledTwiceForSameFlush_onlyLogsOnce() {
+    void flushError_calledTwiceForSameFlush_onlyAppendsOnce() {
         final List<Telemetry> emitted = new ArrayList<>();
         final Capture<String> error = Capture.of("Foo.java: error: boom");
         final ErrorCapture captured = new ErrorCapture();
@@ -119,7 +119,7 @@ class AbstractCompileTest {
         AbstractCompile.flushError(error, captured, tempDir, capturingRecorder(emitted));
         AbstractCompile.flushError(error, captured, tempDir, capturingRecorder(emitted));
 
-        assertThat(emitted).hasSize(1);
+        assertThat(emitted).isEmpty();
         assertThat(captured.output()).isEqualTo("Foo.java: error: boom");
     }
 
