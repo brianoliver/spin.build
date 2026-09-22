@@ -31,8 +31,8 @@ import java.util.Set;
  */
 public record DefaultDependency(GA ga,
                                 Optional<String> version,
-                                String scope,
-                                String type,
+                                DependencyScope scope,
+                                PackagingType type,
                                 Optional<String> classifier,
                                 boolean optional,
                                 Set<String> exclusions) implements Dependency {

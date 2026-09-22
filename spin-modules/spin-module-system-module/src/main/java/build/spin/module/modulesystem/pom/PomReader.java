@@ -21,6 +21,7 @@ package build.spin.module.modulesystem.pom;
  */
 
 import build.base.telemetry.TelemetryRecorder;
+import build.spin.option.OperatingSystem;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -268,7 +269,7 @@ public final class PomReader {
 
         final Pom pom = new DefaultPom(
             Gav.of(groupId, artifactId, version),
-            orDefault(raw.packaging, "jar"),
+            PackagingType.of(orDefault(raw.packaging, PackagingType.Standard.JAR.raw())),
             parent,
             Collections.unmodifiableMap(effectiveProps),
             Collections.unmodifiableMap(effectiveDepMgmt),
@@ -293,7 +294,8 @@ public final class PomReader {
                                      final Set<Path> visited) {
         final List<RawDependency> imports = new ArrayList<>();
         for (final RawDependency rd : rawManagedDeps) {
-            if ("pom".equals(rd.type()) && "import".equals(rd.scope())) {
+            if (PackagingType.Standard.POM.raw().equals(rd.type())
+                && DependencyScope.IMPORT.mavenName().equals(rd.scope())) {
                 imports.add(rd);
             } else {
                 final Dependency dep = toEffectiveDependency(rd, props, Map.of());
@@ -459,7 +461,7 @@ public final class PomReader {
             if (groupId == null || artifactId == null) {
                 continue;
             }
-            final boolean optional = "true".equals(directChildText(dep, "optional"));
+            final boolean optional = Boolean.parseBoolean(directChildText(dep, "optional"));
             final Set<String> exclusions = new LinkedHashSet<>();
             for (final Element exclusionsEl : directChildren(dep, "exclusions")) {
                 for (final Element exclusionEl : directChildren(exclusionsEl, "exclusion")) {
@@ -503,7 +505,7 @@ public final class PomReader {
         String fileMissing = null;
 
         for (final Element activationEl : directChildren(profileEl, "activation")) {
-            activeByDefault = "true".equals(directChildText(activationEl, "activeByDefault"));
+            activeByDefault = Boolean.parseBoolean(directChildText(activationEl, "activeByDefault"));
             jdk = directChildText(activationEl, "jdk");
             for (final Element propEl : directChildren(activationEl, "property")) {
                 propName = directChildText(propEl, "name");
@@ -605,21 +607,22 @@ public final class PomReader {
      * scope/type, matching real Maven's "explicit on the dependency always wins over
      * dependencyManagement" semantics.
      */
-    private static Dependency toEffectiveDependency(final RawDependency rd,
-                                                    final Map<String, String> props,
-                                                    final Map<GA, Dependency> mgmt) {
+    private Dependency toEffectiveDependency(final RawDependency rd,
+                                             final Map<String, String> props,
+                                             final Map<GA, Dependency> mgmt) {
         final String groupId = interpolate(rd.gav().groupId(), props);
         final String artifactId = interpolate(rd.gav().artifactId(), props);
         final Dependency managed = mgmt.get(new GA(groupId, artifactId));
 
         final Optional<String> version = optInterpolated(rd.gav().version(), props)
             .or(() -> managed == null ? Optional.empty() : managed.version());
-        final String scope = rd.scope() != null
-            ? orDefault(interpolate(rd.scope(), props), "compile")
-            : orDefault(managed == null ? null : managed.scope(), "compile");
-        final String type = rd.type() != null
-            ? orDefault(interpolate(rd.type(), props), "jar")
-            : orDefault(managed == null ? null : managed.type(), "jar");
+        final DependencyScope scope = rd.scope() != null
+            ? parseScope(orDefault(interpolate(rd.scope(), props), DependencyScope.COMPILE.mavenName()),
+                groupId, artifactId)
+            : (managed == null ? DependencyScope.COMPILE : managed.scope());
+        final PackagingType type = rd.type() != null
+            ? PackagingType.of(orDefault(interpolate(rd.type(), props), PackagingType.Standard.JAR.raw()))
+            : (managed == null ? PackagingType.Standard.JAR : managed.type());
         final Optional<String> classifier = optInterpolated(rd.classifier(), props)
             .or(() -> managed == null ? Optional.empty() : managed.classifier());
 
@@ -627,8 +630,28 @@ public final class PomReader {
             rd.optional(), rd.exclusions());
     }
 
-    private static Plugin toPlugin(final RawPlugin rp,
-                                   final Map<String, String> props) {
+    /**
+     * Parses an effective (already-interpolated) {@code <scope>} value, defaulting to
+     * {@link DependencyScope#COMPILE} and logging a warning if it isn't one of Maven's six scope
+     * literals — e.g. an unresolved {@code ${...}} property left over from a failed interpolation.
+     * Unlike {@link PackagingType}, {@link DependencyScope} has no open/{@code Custom} case, so a
+     * bad value here must be defaulted rather than thrown, matching this reader's convention
+     * elsewhere of tolerating malformed input instead of failing the whole pom read.
+     */
+    private DependencyScope parseScope(final String text,
+                                       final String groupId,
+                                       final String artifactId) {
+        try {
+            return DependencyScope.of(text);
+        } catch (final IllegalArgumentException e) {
+            this.recorder.warn("Invalid scope [%s] on dependency [%s:%s], defaulting to [%s]",
+                text, groupId, artifactId, DependencyScope.COMPILE.mavenName());
+            return DependencyScope.COMPILE;
+        }
+    }
+
+    private Plugin toPlugin(final RawPlugin rp,
+                            final Map<String, String> props) {
         final String groupId = interpolate(rp.groupId(), props);
         final String artifactId = interpolate(rp.artifactId(), props);
         final Optional<String> version = optInterpolated(rp.version(), props);
@@ -691,10 +714,10 @@ public final class PomReader {
      */
     private static ConfigNode mergeConfig(final ConfigNode parent,
                                           final ConfigNode own) {
-        if (parent == ConfigNode.empty() || parent.name().isEmpty()) {
+        if (parent.name().isEmpty()) {
             return own;
         }
-        if (own == ConfigNode.empty() || own.name().isEmpty()) {
+        if (own.name().isEmpty()) {
             return parent;
         }
         final Map<String, String> attrs = new LinkedHashMap<>(parent.attributes());
@@ -810,12 +833,14 @@ public final class PomReader {
     }
 
     private static boolean matchesOsFamily(final String family) {
-        final String osName = System.getProperty("os.name", "").toLowerCase();
+        final OperatingSystem.Kind kind = OperatingSystem.detect().kind();
         return switch (family.toLowerCase()) {
-            case "windows" -> osName.contains("win");
-            case "mac" -> osName.contains("mac");
-            case "unix", "linux" -> osName.contains("nux") || osName.contains("nix") || osName.contains("mac");
-            default -> osName.contains(family.toLowerCase());
+            case "windows" -> kind == OperatingSystem.Kind.WINDOWS;
+            case "mac" -> kind == OperatingSystem.Kind.MAC;
+            case "unix", "linux" -> kind == OperatingSystem.Kind.UNIX
+                || kind == OperatingSystem.Kind.POSIX
+                || kind == OperatingSystem.Kind.MAC;
+            default -> System.getProperty("os.name", "").toLowerCase().contains(family.toLowerCase());
         };
     }
 
@@ -878,7 +903,7 @@ public final class PomReader {
 
     private static ConfigNode interpolateConfig(final ConfigNode node,
                                                 final Map<String, String> props) {
-        if (node == ConfigNode.empty() || node.name().isEmpty()) {
+        if (node.name().isEmpty()) {
             return node;
         }
         final Optional<String> text = node.text().map(t -> interpolate(t, props));
