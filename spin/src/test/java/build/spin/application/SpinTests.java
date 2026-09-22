@@ -20,6 +20,8 @@ package build.spin.application;
  * #L%
  */
 
+import build.base.configuration.ConfigurationBuilder;
+import build.spin.option.ForceUpdate;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -65,5 +67,21 @@ class SpinTests {
     @Test
     void requireDirectoryDoesNotThrowWhenPathIsADirectory() {
         Spin.requireDirectory(this.tempDir, "Working directory");
+    }
+
+    /**
+     * Regression coverage for the fact that a new {@code Option} class isn't recognized by the CLI
+     * just because it exists — it must also be registered via {@code .option(...)} in
+     * {@link Spin#buildParser}. {@code --force-update} was added to {@link ForceUpdate} without that
+     * registration once already, which would have made the flag silently do nothing.
+     */
+    @Test
+    void forceUpdateFlagIsRegisteredAndParsesToForce() {
+        final Spin.ParseResult parsed = Spin.buildParser();
+
+        final ConfigurationBuilder options = parsed.parser().parse(new String[]{"--force-update"});
+
+        assertThat(options.isPresent(ForceUpdate.class)).isTrue();
+        assertThat(options.get(ForceUpdate.class)).isEqualTo(ForceUpdate.FORCE);
     }
 }

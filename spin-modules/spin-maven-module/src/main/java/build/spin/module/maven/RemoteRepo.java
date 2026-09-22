@@ -27,14 +27,15 @@ import java.util.Optional;
  * A remote Maven repository resolved from {@code ~/.m2/settings.xml} (or the Maven Central
  * default), with any {@code <mirror>} substitution already applied.
  */
-record RemoteRepo(String id, String url, Optional<String> authHeader, Optional<String> snapshotUpdatePolicy) {
+record RemoteRepo(String id, String url, Optional<String> authHeader, Optional<String> snapshotUpdatePolicy,
+                  Optional<String> releaseUpdatePolicy) {
 
     static RemoteRepo of(final String id, final String url) {
-        return new RemoteRepo(id, url, Optional.empty(), Optional.empty());
+        return new RemoteRepo(id, url, Optional.empty(), Optional.empty(), Optional.empty());
     }
 
     static RemoteRepo of(final String id, final String url, final String updatePolicy) {
-        return new RemoteRepo(id, url, Optional.empty(), Optional.ofNullable(updatePolicy));
+        return new RemoteRepo(id, url, Optional.empty(), Optional.ofNullable(updatePolicy), Optional.empty());
     }
 
     static RemoteRepo of(final String id, final String url,
@@ -44,8 +45,14 @@ record RemoteRepo(String id, String url, Optional<String> authHeader, Optional<S
 
     static RemoteRepo of(final String id, final String url, final String updatePolicy,
                          final String username, final String password) {
+        return of(id, url, updatePolicy, null, username, password);
+    }
+
+    static RemoteRepo of(final String id, final String url, final String snapshotUpdatePolicy,
+                         final String releaseUpdatePolicy, final String username, final String password) {
         final String encoded = Base64.getEncoder()
             .encodeToString((username + ":" + password).getBytes());
-        return new RemoteRepo(id, url, Optional.of("Basic " + encoded), Optional.ofNullable(updatePolicy));
+        return new RemoteRepo(id, url, Optional.of("Basic " + encoded),
+            Optional.ofNullable(snapshotUpdatePolicy), Optional.ofNullable(releaseUpdatePolicy));
     }
 }
