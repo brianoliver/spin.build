@@ -31,6 +31,7 @@ import build.spin.module.modulesystem.pom.PomReader;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.Authenticator;
 import java.net.InetSocketAddress;
 import java.net.PasswordAuthentication;
@@ -53,8 +54,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 
 /**
  * A pure-JDK Maven artifact resolver: checks the local repository first, then downloads from
@@ -93,11 +96,14 @@ class PomResolver {
     private final TelemetryRecorder recorder;
     private final Path localRepository;
     private final boolean offline;
+    private final boolean forceUpdate;
     private final List<RemoteRepo> remoteRepos;
     private final HttpClient httpClient;
     private final PomReader pomReader;
 
     private static final long SNAPSHOT_TTL_MS = 86_400_000L; // daily
+    private static final String LAST_UPDATED_COMMENT =
+        "NOTE: This is a Maven Resolver internal implementation file, its format can be changed without prior notice.";
 
     private final ConcurrentHashMap<String, Optional<Path>> downloadCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, List<Dependency>> descriptorCache = new ConcurrentHashMap<>();
@@ -106,7 +112,7 @@ class PomResolver {
                 final Path localRepository,
                 final boolean offline,
                 final List<RemoteRepo> remoteRepos) {
-        this(recorder, localRepository, offline, remoteRepos, Optional.empty());
+        this(recorder, localRepository, offline, remoteRepos, Optional.empty(), false);
     }
 
     PomResolver(final TelemetryRecorder recorder,
@@ -114,9 +120,19 @@ class PomResolver {
                 final boolean offline,
                 final List<RemoteRepo> remoteRepos,
                 final Optional<MavenProxy> proxy) {
+        this(recorder, localRepository, offline, remoteRepos, proxy, false);
+    }
+
+    PomResolver(final TelemetryRecorder recorder,
+                final Path localRepository,
+                final boolean offline,
+                final List<RemoteRepo> remoteRepos,
+                final Optional<MavenProxy> proxy,
+                final boolean forceUpdate) {
         this.recorder = recorder;
         this.localRepository = localRepository;
         this.offline = offline;
+        this.forceUpdate = forceUpdate;
         this.remoteRepos = remoteRepos;
         this.httpClient = buildHttpClient(proxy);
         // repository-only reader: no <relativePath> reactor to walk, and both parent and
@@ -126,6 +142,12 @@ class PomResolver {
     }
 
     static PomResolver fromSettings(final TelemetryRecorder recorder, final boolean offline) {
+        return fromSettings(recorder, offline, false);
+    }
+
+    static PomResolver fromSettings(final TelemetryRecorder recorder,
+                                    final boolean offline,
+                                    final boolean forceUpdate) {
         final Path home = Path.of(System.getProperty("user.home"));
         final Path localRepo = home.resolve(".m2/repository");
         final Path settingsPath = home.resolve(".m2/settings.xml");
@@ -138,7 +160,7 @@ class PomResolver {
             ? MavenSettingsReader.readProxy(settingsPath, recorder)
             : Optional.empty();
 
-        return new PomResolver(recorder, localRepo, offline, repos, proxy);
+        return new PomResolver(recorder, localRepo, offline, repos, proxy, forceUpdate);
     }
 
     /**
@@ -456,8 +478,12 @@ class PomResolver {
      * A snapshot is fresh if the artifact already in the local repository was last modified within
      * {@code ttlMs} — whether it was placed there by spin's own resolver or by a plain
      * {@code mvn install}, since either way the file's mtime reflects when it was actually produced.
+     * {@link #forceUpdate} (Maven's {@code -U}) always treats it as stale, forcing a re-check.
      */
     private boolean isSnapshotFresh(final Path target, final long ttlMs) {
+        if (this.forceUpdate) {
+            return false;
+        }
         try {
             return (System.currentTimeMillis() - Files.getLastModifiedTime(target).toMillis()) < ttlMs;
         } catch (final IOException e) {
@@ -513,9 +539,11 @@ class PomResolver {
      * "tried [...]" summary if every repository fails).
      */
     private sealed interface Attempt<T> {
-        record Success<T>(T value) implements Attempt<T> { }
+        record Success<T>(T value) implements Attempt<T> {
+        }
 
-        record Failure<T>(String reason) implements Attempt<T> { }
+        record Failure<T>(String reason) implements Attempt<T> {
+        }
     }
 
     /**
@@ -529,13 +557,20 @@ class PomResolver {
     private <T> Optional<T> resolveAcrossRepos(final String relativePath,
                                                final String subject,
                                                final RepoAttempt<T> attempt) {
-        if (this.remoteRepos.isEmpty()) {
+        return resolveAcrossRepos(relativePath, subject, this.remoteRepos, attempt);
+    }
+
+    private <T> Optional<T> resolveAcrossRepos(final String relativePath,
+                                               final String subject,
+                                               final List<RemoteRepo> repos,
+                                               final RepoAttempt<T> attempt) {
+        if (repos.isEmpty()) {
             this.recorder.warn("Could not resolve %s — no remote repositories configured", subject);
             return Optional.empty();
         }
 
         final List<String> attempts = new ArrayList<>();
-        for (final RemoteRepo repo : this.remoteRepos) {
+        for (final RemoteRepo repo : repos) {
             final String url = repo.url().endsWith("/")
                 ? repo.url() + relativePath
                 : repo.url() + "/" + relativePath;
@@ -555,6 +590,31 @@ class PomResolver {
         return Optional.empty();
     }
 
+    /**
+     * As {@link #resolveAcrossRepos}, but first drops any repository whose {@code <target>.lastUpdated}
+     * marker (per {@code markerTarget}) already records a negative check within its update-policy TTL
+     * (per {@code ttlMs}) — so a coordinate that 404s against every configured repository isn't
+     * re-requested on every build. If every repository is filtered out this way (and at least one was
+     * configured), resolution fails fast with a dedicated warning instead of falling through to
+     * {@link #resolveAcrossRepos}'s "no remote repositories configured" message, which would be
+     * misleading here.
+     */
+    private <T> Optional<T> resolveAcrossFreshRepos(final String relativePath,
+                                                    final String subject,
+                                                    final Function<RemoteRepo, Path> markerTarget,
+                                                    final Function<RemoteRepo, Long> ttlMs,
+                                                    final RepoAttempt<T> attempt) {
+        final List<RemoteRepo> candidates = this.remoteRepos.stream()
+            .filter(repo -> !recentlyCheckedNotFound(markerTarget.apply(repo), repo, ttlMs.apply(repo)))
+            .toList();
+        if (candidates.isEmpty() && !this.remoteRepos.isEmpty()) {
+            this.recorder.warn("Skipping %s — already checked all configured repositories within the last "
+                + "update interval and none had it", subject);
+            return Optional.empty();
+        }
+        return resolveAcrossRepos(relativePath, subject, candidates, attempt);
+    }
+
     @FunctionalInterface
     private interface RepoAttempt<T> {
         Attempt<T> tryRepo(RemoteRepo repo, String url) throws IOException, InterruptedException;
@@ -571,23 +631,40 @@ class PomResolver {
         final String groupPath = gav.groupId().replace('.', '/');
         final String metaRelPath = groupPath + "/" + gav.artifactId() + "/" + gav.version() + "/maven-metadata.xml";
         final String subject = "snapshot metadata for " + gav.groupId() + ":" + gav.artifactId() + ":" + gav.version();
+        final Path versionDir = this.localRepository.resolve(groupPath).resolve(gav.artifactId()).resolve(gav.version());
 
-        return resolveAcrossRepos(metaRelPath, subject, (repo, url) -> {
-            final HttpResponse<InputStream> response = get(url, repo);
-            if (response.statusCode() == 200) {
-                try (InputStream body = response.body()) {
-                    final Optional<String> suffix = SnapshotMetadataReader.parseSnapshotSuffix(body);
-                    if (suffix.isPresent()) {
-                        return new Attempt.Success<>(suffix.get());
+        return resolveAcrossFreshRepos(metaRelPath, subject,
+            repo -> metadataMarkerTarget(versionDir, repo),
+            repo -> updatePolicyTtlMs(repo.snapshotUpdatePolicy()),
+            (repo, url) -> {
+                final HttpResponse<InputStream> response = get(url, repo);
+                if (response.statusCode() == 200) {
+                    try (InputStream body = response.body()) {
+                        final Optional<String> suffix = SnapshotMetadataReader.parseSnapshotSuffix(body);
+                        if (suffix.isPresent()) {
+                            recordUpdateCheck(metadataMarkerTarget(versionDir, repo), repo, Optional.empty());
+                            return new Attempt.Success<>(suffix.get());
+                        }
+                        return new Attempt.Failure<>("metadata present but no snapshot suffix");
                     }
-                    return new Attempt.Failure<>("metadata present but no snapshot suffix");
                 }
-            }
-            if (response.statusCode() == 404) {
-                return new Attempt.Failure<>("not found (404)");
-            }
-            return new Attempt.Failure<>("HTTP " + response.statusCode());
-        });
+                if (response.statusCode() == 404) {
+                    recordUpdateCheck(metadataMarkerTarget(versionDir, repo), repo, Optional.of("not found (404)"));
+                    return new Attempt.Failure<>("not found (404)");
+                }
+                return new Attempt.Failure<>("HTTP " + response.statusCode());
+            });
+    }
+
+    /**
+     * The local path Maven itself uses to track a SNAPSHOT {@code maven-metadata.xml} fetched from a
+     * specific repository — {@code maven-metadata-<repoId>.xml} in the artifact's version directory —
+     * used here purely as the anchor for that repo's {@code .lastUpdated} marker; spin doesn't persist
+     * the metadata content itself since {@link SnapshotMetadataReader} parses it directly from the
+     * HTTP response.
+     */
+    private Path metadataMarkerTarget(final Path versionDir, final RemoteRepo repo) {
+        return versionDir.resolve("maven-metadata-" + repo.id() + ".xml");
     }
 
     private Optional<Path> downloadSnapshot(final Coordinates coords,
@@ -602,25 +679,30 @@ class PomResolver {
         final String relativePath = groupPath + "/" + gav.artifactId() + "/" + gav.version() + "/" + filename;
         final String subject = "snapshot " + gav.groupId() + ":" + gav.artifactId() + ":" + gav.version();
 
-        return resolveAcrossRepos(relativePath, subject, (repo, url) -> {
-            final HttpResponse<InputStream> response = get(url, repo);
-            if (response.statusCode() == 200) {
-                Files.createDirectories(target.getParent());
-                try (InputStream body = response.body()) {
-                    Files.copy(body, target, StandardCopyOption.REPLACE_EXISTING);
+        return resolveAcrossFreshRepos(relativePath, subject,
+            repo -> target,
+            repo -> updatePolicyTtlMs(repo.snapshotUpdatePolicy()),
+            (repo, url) -> {
+                final HttpResponse<InputStream> response = get(url, repo);
+                if (response.statusCode() == 200) {
+                    Files.createDirectories(target.getParent());
+                    try (InputStream body = response.body()) {
+                        Files.copy(body, target, StandardCopyOption.REPLACE_EXISTING);
+                    }
+                    if (!verifySha1(url, target, repo)) {
+                        Files.deleteIfExists(target);
+                        return new Attempt.Failure<>("checksum verification failed");
+                    }
+                    this.recorder.info("Downloaded snapshot %s from %s", filename, repo.id());
+                    recordUpdateCheck(target, repo, Optional.empty());
+                    return new Attempt.Success<>(target);
                 }
-                if (!verifySha1(url, target, repo)) {
-                    Files.deleteIfExists(target);
-                    return new Attempt.Failure<>("checksum verification failed");
+                if (response.statusCode() == 404) {
+                    recordUpdateCheck(target, repo, Optional.of("not found (404)"));
+                    return new Attempt.Failure<>("not found (404)");
                 }
-                this.recorder.info("Downloaded snapshot %s from %s", filename, repo.id());
-                return new Attempt.Success<>(target);
-            }
-            if (response.statusCode() == 404) {
-                return new Attempt.Failure<>("not found (404)");
-            }
-            return new Attempt.Failure<>("HTTP " + response.statusCode());
-        });
+                return new Attempt.Failure<>("HTTP " + response.statusCode());
+            });
     }
 
     private Optional<Path> download(final Coordinates coords,
@@ -634,25 +716,113 @@ class PomResolver {
         final String relativePath = groupPath + "/" + gav.artifactId() + "/" + gav.version() + "/" + filename;
         final String subject = gav.groupId() + ":" + gav.artifactId() + ":" + gav.version() + ":" + coords.extension();
 
-        return resolveAcrossRepos(relativePath, subject, (repo, url) -> {
-            final HttpResponse<InputStream> response = get(url, repo);
-            if (response.statusCode() == 200) {
-                Files.createDirectories(target.getParent());
-                try (InputStream body = response.body()) {
-                    Files.copy(body, target, StandardCopyOption.REPLACE_EXISTING);
+        return resolveAcrossFreshRepos(relativePath, subject,
+            repo -> target,
+            repo -> updatePolicyTtlMs(repo.releaseUpdatePolicy()),
+            (repo, url) -> {
+                final HttpResponse<InputStream> response = get(url, repo);
+                if (response.statusCode() == 200) {
+                    Files.createDirectories(target.getParent());
+                    try (InputStream body = response.body()) {
+                        Files.copy(body, target, StandardCopyOption.REPLACE_EXISTING);
+                    }
+                    if (!verifySha1(url, target, repo)) {
+                        Files.deleteIfExists(target);
+                        return new Attempt.Failure<>("checksum verification failed");
+                    }
+                    this.recorder.info("Downloaded %s from %s", filename, repo.id());
+                    recordUpdateCheck(target, repo, Optional.empty());
+                    return new Attempt.Success<>(target);
                 }
-                if (!verifySha1(url, target, repo)) {
-                    Files.deleteIfExists(target);
-                    return new Attempt.Failure<>("checksum verification failed");
+                if (response.statusCode() == 404) {
+                    recordUpdateCheck(target, repo, Optional.of("not found (404)"));
+                    return new Attempt.Failure<>("not found (404)");
                 }
-                this.recorder.info("Downloaded %s from %s", filename, repo.id());
-                return new Attempt.Success<>(target);
+                return new Attempt.Failure<>("HTTP " + response.statusCode());
+            });
+    }
+
+    /**
+     * Whether {@code repo} is known, from a {@code <target>.lastUpdated} marker file, to have been
+     * checked for {@code target} within {@code ttlMs} and to not have it — mirroring Maven/Aether's own
+     * {@code <artifact>.lastUpdated} tracking file (same location, same {@link Properties} format,
+     * keyed by repository URL) so that a coordinate that's absent from a configured repository isn't
+     * re-requested on every single build, and so a plain {@code mvn} invocation against the same local
+     * repository shares this state rather than duplicating it. A marker with no {@code .error} key
+     * records a prior <em>success</em>, not a miss — that state means nothing here, since {@code target}
+     * would then already exist and downloadIfNeeded()/resolveSnapshot() would have returned it without
+     * ever consulting this method; if {@code target} is missing anyway (e.g. a manually deleted jar
+     * whose marker survived), the repo must still be re-checked rather than treated as a cached miss.
+     * Callers pass the TTL derived from whichever {@code <updatePolicy>} applies to what's being
+     * resolved — releases or snapshots — since a repository can configure the two independently.
+     * {@link #forceUpdate} (Maven's {@code -U}) bypasses this cache entirely, forcing every repository
+     * to be re-checked.
+     */
+    private boolean recentlyCheckedNotFound(final Path target, final RemoteRepo repo, final long ttlMs) {
+        if (this.forceUpdate) {
+            return false;
+        }
+        final Path marker = lastUpdatedMarker(target);
+        if (!Files.exists(marker)) {
+            return false;
+        }
+        final Properties props = new Properties();
+        try (InputStream in = Files.newInputStream(marker)) {
+            props.load(in);
+        } catch (final IOException e) {
+            return false;
+        }
+        if (props.getProperty(repo.url() + ".error") == null) {
+            return false;
+        }
+        final String value = props.getProperty(repo.url() + ".lastUpdated");
+        if (value == null) {
+            return false;
+        }
+        try {
+            final long checkedAt = Long.parseLong(value);
+            return (System.currentTimeMillis() - checkedAt) < ttlMs;
+        } catch (final NumberFormatException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Records, in the same {@code <target>.lastUpdated} marker file Maven/Aether writes, that
+     * {@code repo} was just checked for {@code target}. {@code error}, when present, marks the check as
+     * having failed (e.g. a 404) — mirroring Aether, which only writes the {@code <url>.error} key on
+     * failure; a successful check gets {@code <url>.lastUpdated} alone, with no {@code .error} key at
+     * all, so a plain {@code mvn} invocation reading this same marker doesn't mistake a successful
+     * download for a prior failure.
+     */
+    private void recordUpdateCheck(final Path target, final RemoteRepo repo, final Optional<String> error) {
+        final Path marker = lastUpdatedMarker(target);
+        final Properties props = new Properties();
+        if (Files.exists(marker)) {
+            try (InputStream in = Files.newInputStream(marker)) {
+                props.load(in);
+            } catch (final IOException e) {
+                // unreadable marker: fall through and overwrite it with a fresh one below
             }
-            if (response.statusCode() == 404) {
-                return new Attempt.Failure<>("not found (404)");
+        }
+        props.setProperty(repo.url() + ".lastUpdated", Long.toString(System.currentTimeMillis()));
+        if (error.isPresent()) {
+            props.setProperty(repo.url() + ".error", error.get());
+        } else {
+            props.remove(repo.url() + ".error");
+        }
+        try {
+            Files.createDirectories(marker.getParent());
+            try (OutputStream out = Files.newOutputStream(marker)) {
+                props.store(out, LAST_UPDATED_COMMENT);
             }
-            return new Attempt.Failure<>("HTTP " + response.statusCode());
-        });
+        } catch (final IOException e) {
+            this.recorder.warn(e, "Could not write update-tracking file %s", marker.getFileName());
+        }
+    }
+
+    private Path lastUpdatedMarker(final Path target) {
+        return target.resolveSibling(target.getFileName() + ".lastUpdated");
     }
 
     /**

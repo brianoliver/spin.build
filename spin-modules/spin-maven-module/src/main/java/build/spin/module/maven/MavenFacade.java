@@ -27,12 +27,14 @@ import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.UnresolvableResourceException;
 import build.spin.module.modulesystem.pom.Dependency;
 import build.spin.module.modulesystem.pom.Gav;
+import build.spin.option.ForceUpdate;
 import build.spin.option.NetworkAccess;
 
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 
+import static build.spin.option.ForceUpdate.FORCE;
 import static build.spin.option.NetworkAccess.OFFLINE;
 
 /**
@@ -51,7 +53,10 @@ class MavenFacade {
         final boolean offline = optionsByType.getOptional(NetworkAccess.class)
             .map(n -> n == OFFLINE)
             .orElse(false);
-        this.resolver = PomResolver.fromSettings(recorder, offline);
+        final boolean forceUpdate = optionsByType.getOptional(ForceUpdate.class)
+            .map(u -> u == FORCE)
+            .orElse(false);
+        this.resolver = PomResolver.fromSettings(recorder, offline, forceUpdate);
     }
 
     /**

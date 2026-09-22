@@ -78,7 +78,9 @@ final class MavenSettingsReader {
                 String repoId = null;
                 String repoUrl = null;
                 String repoSnapshotUpdatePolicy = null;
+                String repoReleaseUpdatePolicy = null;
                 boolean inRepoSnapshots = false;
+                boolean inRepoReleases = false;
                 String serverId = null;
                 String serverUser = null;
                 String serverPass = null;
@@ -112,9 +114,16 @@ final class MavenSettingsReader {
                                     inRepoSnapshots = true;
                                 }
                             }
+                            case "releases" -> {
+                                if ("repository".equals(context)) {
+                                    inRepoReleases = true;
+                                }
+                            }
                             case "updatePolicy" -> {
                                 if (inRepoSnapshots) {
                                     repoSnapshotUpdatePolicy = r.getElementText();
+                                } else if (inRepoReleases) {
+                                    repoReleaseUpdatePolicy = r.getElementText();
                                 }
                             }
                             case "id" -> {
@@ -152,15 +161,17 @@ final class MavenSettingsReader {
                         final String name = r.getLocalName();
                         switch (name) {
                             case "snapshots" -> inRepoSnapshots = false;
+                            case "releases" -> inRepoReleases = false;
                             case "activation" -> inActivation = false;
                             case "repository" -> {
                                 if (repoId != null && repoUrl != null && profileId != null) {
                                     profileRepos.computeIfAbsent(profileId, __ -> new ArrayList<>())
-                                        .add(new String[]{repoId, repoUrl, repoSnapshotUpdatePolicy});
+                                        .add(new String[]{repoId, repoUrl, repoSnapshotUpdatePolicy, repoReleaseUpdatePolicy});
                                 }
                                 repoId = null;
                                 repoUrl = null;
                                 repoSnapshotUpdatePolicy = null;
+                                repoReleaseUpdatePolicy = null;
                                 context = "profile";
                             }
                             case "profile" -> {
@@ -212,9 +223,10 @@ final class MavenSettingsReader {
                 for (final String[] repo : repoList) {
                     final String[] auth = serverAuth.get(repo[0]);
                     if (auth != null) {
-                        repos.add(RemoteRepo.of(repo[0], repo[1], repo[2], auth[0], auth[1]));
+                        repos.add(RemoteRepo.of(repo[0], repo[1], repo[2], repo[3], auth[0], auth[1]));
                     } else {
-                        repos.add(RemoteRepo.of(repo[0], repo[1], repo[2]));
+                        repos.add(new RemoteRepo(repo[0], repo[1], Optional.empty(),
+                            Optional.ofNullable(repo[2]), Optional.ofNullable(repo[3])));
                     }
                 }
             }
@@ -296,6 +308,14 @@ final class MavenSettingsReader {
         return Optional.empty();
     }
 
+    /**
+     * Substitutes each mirrored {@link RemoteRepo}'s id/url/credentials for its {@code <mirror>}'s,
+     * while carrying over the original repository's {@code <snapshots>}/{@code <releases>}
+     * {@code <updatePolicy>} — matching Maven's own mirror semantics, where a {@code <mirror>} replaces
+     * only the connection endpoint, not the policies the original {@code <repository>} declared.
+     * Dropping them here would otherwise silently fall every mirrored repo back to the daily default,
+     * which is the common case: most {@code settings.xml} route everything through a single mirror.
+     */
     private static void applyMirrors(final List<RemoteRepo> repos,
                                      final List<String[]> mirrors,
                                      final Map<String, String[]> serverAuth) {
@@ -308,8 +328,10 @@ final class MavenSettingsReader {
                 if (addedMirrors.add(mirrorId)) {
                     final String[] auth = serverAuth.get(mirrorId);
                     result.add(auth != null
-                        ? RemoteRepo.of(mirrorId, matchingMirror[1], auth[0], auth[1])
-                        : RemoteRepo.of(mirrorId, matchingMirror[1]));
+                        ? RemoteRepo.of(mirrorId, matchingMirror[1], repo.snapshotUpdatePolicy().orElse(null),
+                            repo.releaseUpdatePolicy().orElse(null), auth[0], auth[1])
+                        : new RemoteRepo(mirrorId, matchingMirror[1], Optional.empty(),
+                            repo.snapshotUpdatePolicy(), repo.releaseUpdatePolicy()));
                 }
             } else {
                 result.add(repo);

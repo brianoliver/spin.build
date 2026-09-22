@@ -25,9 +25,11 @@ import build.base.telemetry.Warning;
 import build.spin.common.telemetry.TelemetryPublisher;
 import build.spin.module.modulesystem.pom.Gav;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.InetAddress;
@@ -44,6 +46,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -158,7 +161,7 @@ public class PomResolverTests {
      * policy (or lack thereof).
      */
     @Test
-    void shouldParseSnapshotUpdatePolicyFromSettingsXml(@org.junit.jupiter.api.io.TempDir final Path tempDir)
+    void shouldParseSnapshotUpdatePolicyFromSettingsXml(@TempDir final Path tempDir)
         throws IOException {
         final Path settingsPath = tempDir.resolve("settings.xml");
         Files.writeString(settingsPath, """
@@ -207,7 +210,7 @@ public class PomResolverTests {
      * default-active convenience to also be listed explicitly.
      */
     @Test
-    void shouldActivateProfileMarkedActiveByDefault(@org.junit.jupiter.api.io.TempDir final Path tempDir)
+    void shouldActivateProfileMarkedActiveByDefault(@TempDir final Path tempDir)
         throws IOException {
         final Path settingsPath = tempDir.resolve("settings.xml");
         Files.writeString(settingsPath, """
@@ -244,7 +247,7 @@ public class PomResolverTests {
      */
     @Test
     void shouldSuppressActiveByDefaultWhenActiveProfilesIsExplicit(
-        @org.junit.jupiter.api.io.TempDir final Path tempDir) throws IOException {
+        @TempDir final Path tempDir) throws IOException {
         final Path settingsPath = tempDir.resolve("settings.xml");
         Files.writeString(settingsPath, """
             <settings>
@@ -290,7 +293,7 @@ public class PomResolverTests {
      * {@code <nonProxyHosts>} must correctly bypass matching hosts.
      */
     @Test
-    void shouldParseActiveProxyAndRespectNonProxyHosts(@org.junit.jupiter.api.io.TempDir final Path tempDir)
+    void shouldParseActiveProxyAndRespectNonProxyHosts(@TempDir final Path tempDir)
         throws IOException {
         final Path settingsPath = tempDir.resolve("settings.xml");
         Files.writeString(settingsPath, """
@@ -327,7 +330,7 @@ public class PomResolverTests {
      * only proxy declared.
      */
     @Test
-    void shouldIgnoreInactiveProxy(@org.junit.jupiter.api.io.TempDir final Path tempDir) throws IOException {
+    void shouldIgnoreInactiveProxy(@TempDir final Path tempDir) throws IOException {
         final Path settingsPath = tempDir.resolve("settings.xml");
         Files.writeString(settingsPath, """
             <settings>
@@ -478,7 +481,7 @@ public class PomResolverTests {
      */
     @Test
     void shouldTreatFreshLocallyInstalledSnapshotAsUpToDateWithoutSpinsOwnMarker(
-        @org.junit.jupiter.api.io.TempDir final Path tempDir) throws IOException {
+        @TempDir final Path tempDir) throws IOException {
         final Path target = tempDir.resolve("test/artifact/1.0-SNAPSHOT/artifact-1.0-SNAPSHOT.jar");
         Files.createDirectories(target.getParent());
         Files.writeString(target, "locally-installed-bytes");
@@ -506,7 +509,7 @@ public class PomResolverTests {
      */
     @Test
     void shouldRefetchSnapshotOnceLocalCopyAgesPastTheUpdatePolicyTtl(
-        @org.junit.jupiter.api.io.TempDir final Path tempDir) throws IOException {
+        @TempDir final Path tempDir) throws IOException {
         final Path target = tempDir.resolve("test/artifact/1.0-SNAPSHOT/artifact-1.0-SNAPSHOT.jar");
         Files.createDirectories(target.getParent());
         Files.writeString(target, "stale-local-bytes");
@@ -537,7 +540,7 @@ public class PomResolverTests {
      * local repository.
      */
     @Test
-    void shouldRejectDownloadWhenChecksumSidecarRequestFails(@org.junit.jupiter.api.io.TempDir final Path tempDir)
+    void shouldRejectDownloadWhenChecksumSidecarRequestFails(@TempDir final Path tempDir)
         throws IOException {
         try (TestRepoServer server = new TestRepoServer()) {
             final PomResolver resolver = new PomResolver(
@@ -590,6 +593,183 @@ public class PomResolverTests {
     }
 
     /**
+     * A 404 for a release coordinate must leave a Maven-compatible {@code <artifact>.lastUpdated}
+     * marker file next to where the artifact would have landed, so a plain {@code mvn} invocation
+     * against the same local repository observes the same "checked, not found" record spin just
+     * wrote (and vice versa). Aether only writes the {@code <url>.error} key when a check actually
+     * failed, so a 404 must set it too — a marker with {@code .lastUpdated} alone would read as a
+     * successful check to a plain {@code mvn} invocation.
+     */
+    @Test
+    void shouldWriteLastUpdatedMarkerOnNotFound(@TempDir final Path tempDir)
+        throws IOException {
+        try (NotFoundTestRepoServer server = new NotFoundTestRepoServer()) {
+            final PomResolver resolver = new PomResolver(
+                new TelemetryPublisher(URI.create("maven://marker-test"), telemetry -> { }),
+                tempDir,
+                false,
+                List.of(RemoteRepo.of("only-repo", "http://localhost:" + server.port())));
+
+            resolver.resolveArtifact("test:missing:1.0");
+
+            final Path marker = tempDir.resolve("test/missing/1.0/missing-1.0.jar.lastUpdated");
+            assertThat(marker).exists();
+            final Properties props = new Properties();
+            try (InputStream in = Files.newInputStream(marker)) {
+                props.load(in);
+            }
+            final String repoUrl = "http://localhost:" + server.port();
+            assertThat(props.getProperty(repoUrl + ".lastUpdated")).isNotNull();
+            assertThat(props.getProperty(repoUrl + ".error")).isNotNull().isNotEmpty();
+        }
+    }
+
+    /**
+     * A successful download must leave a marker with {@code .lastUpdated} but no {@code .error} key
+     * at all — Aether only writes {@code .error} on failure, and its presence (even empty) reads as
+     * "this check failed" to a plain {@code mvn} invocation sharing the same local repository.
+     */
+    @Test
+    void shouldNotWriteErrorKeyOnSuccessfulDownload(@TempDir final Path tempDir)
+        throws IOException {
+        try (NoChecksumTestRepoServer server = new NoChecksumTestRepoServer()) {
+            final PomResolver resolver = new PomResolver(
+                new TelemetryPublisher(URI.create("maven://marker-success-test"), telemetry -> { }),
+                tempDir,
+                false,
+                List.of(RemoteRepo.of("only-repo", "http://localhost:" + server.port())));
+
+            final Optional<Path> resolved = resolver.resolveArtifact("test:artifact:1.0");
+
+            assertThat(resolved).isPresent();
+            final Path marker = tempDir.resolve("test/artifact/1.0/artifact-1.0.jar.lastUpdated");
+            assertThat(marker).exists();
+            final Properties props = new Properties();
+            try (InputStream in = Files.newInputStream(marker)) {
+                props.load(in);
+            }
+            final String repoUrl = "http://localhost:" + server.port();
+            assertThat(props.getProperty(repoUrl + ".lastUpdated")).isNotNull();
+            assertThat(props.getProperty(repoUrl + ".error")).isNull();
+        }
+    }
+
+    /**
+     * Once a coordinate has been checked against every configured repository and found nowhere, a
+     * second resolution attempt (a new {@link PomResolver}, modeling a fresh build invocation) must
+     * not re-issue the HTTP requests — it should trust the {@code .lastUpdated} marker from the first
+     * attempt and skip the network entirely, the behavior the negative cache exists for.
+     */
+    @Test
+    void shouldNotReRequestMissingArtifactWithinUpdateWindow(@TempDir final Path tempDir)
+        throws IOException {
+        try (NotFoundTestRepoServer server = new NotFoundTestRepoServer()) {
+            final List<RemoteRepo> repos =
+                List.of(RemoteRepo.of("only-repo", "http://localhost:" + server.port()));
+
+            new PomResolver(new TelemetryPublisher(URI.create("maven://repeat-test-1"), telemetry -> { }),
+                tempDir, false, repos)
+                .resolveArtifact("test:missing:1.0");
+            assertThat(server.requestCount()).isEqualTo(1);
+
+            final List<Telemetry> captured = new ArrayList<>();
+            final Optional<Path> resolved = new PomResolver(
+                new TelemetryPublisher(URI.create("maven://repeat-test-2"), captured::add),
+                tempDir, false, repos)
+                .resolveArtifact("test:missing:1.0");
+
+            assertThat(resolved).isEmpty();
+            assertThat(server.requestCount()).isEqualTo(1);
+            assertThat(captured)
+                .filteredOn(Warning.class::isInstance)
+                .extracting(Telemetry::message)
+                .anyMatch(message -> message.contains("already checked all configured repositories"));
+        }
+    }
+
+    /**
+     * The identical negative-cache behavior as {@link #shouldNotReRequestMissingArtifactWithinUpdateWindow},
+     * but for the SNAPSHOT {@code maven-metadata.xml} lookup ({@link PomResolver#fetchSnapshotSuffix})
+     * rather than a release artifact download — a coordinate whose metadata 404s against every
+     * configured repository must not be re-requested by a second, fresh {@link PomResolver} within the
+     * update window either.
+     */
+    @Test
+    void shouldNotReRequestMissingSnapshotMetadataWithinUpdateWindow(@TempDir final Path tempDir)
+        throws IOException {
+        try (NotFoundTestRepoServer server = new NotFoundTestRepoServer()) {
+            final List<RemoteRepo> repos =
+                List.of(RemoteRepo.of("only-repo", "http://localhost:" + server.port()));
+
+            new PomResolver(new TelemetryPublisher(URI.create("maven://snapshot-repeat-test-1"), telemetry -> { }),
+                tempDir, false, repos)
+                .resolveArtifact("test:missing:1.0-SNAPSHOT");
+            assertThat(server.requestCount()).isEqualTo(1);
+
+            final List<Telemetry> captured = new ArrayList<>();
+            final Optional<Path> resolved = new PomResolver(
+                new TelemetryPublisher(URI.create("maven://snapshot-repeat-test-2"), captured::add),
+                tempDir, false, repos)
+                .resolveArtifact("test:missing:1.0-SNAPSHOT");
+
+            assertThat(resolved).isEmpty();
+            assertThat(server.requestCount()).isEqualTo(1);
+            assertThat(captured)
+                .filteredOn(Warning.class::isInstance)
+                .extracting(Telemetry::message)
+                .anyMatch(message -> message.contains("already checked all configured repositories"));
+        }
+    }
+
+    /**
+     * A repo's {@code <releases><updatePolicy>always</updatePolicy>} must defeat the negative cache
+     * entirely — mirroring Maven's own semantics for {@code always} — even though the same coordinate
+     * already has a fresh {@code .lastUpdated} marker from a prior attempt against that repo.
+     */
+    @Test
+    void shouldAlwaysRecheckMissingArtifactWhenReleaseUpdatePolicyIsAlways(@TempDir final Path tempDir)
+        throws IOException {
+        try (NotFoundTestRepoServer server = new NotFoundTestRepoServer()) {
+            final List<RemoteRepo> repos = List.of(new RemoteRepo("only-repo",
+                "http://localhost:" + server.port(), Optional.empty(), Optional.empty(), Optional.of("always")));
+
+            new PomResolver(new TelemetryPublisher(URI.create("maven://always-test-1"), telemetry -> { }),
+                tempDir, false, repos)
+                .resolveArtifact("test:missing:1.0");
+            new PomResolver(new TelemetryPublisher(URI.create("maven://always-test-2"), telemetry -> { }),
+                tempDir, false, repos)
+                .resolveArtifact("test:missing:1.0");
+
+            assertThat(server.requestCount()).isEqualTo(2);
+        }
+    }
+
+    /**
+     * {@code forceUpdate} (spin's {@code --force-update}, mirroring Maven's {@code -U}) must bypass
+     * the negative cache entirely, even though a prior attempt already left a fresh {@code .lastUpdated}
+     * marker well within the default daily window — the whole point of the flag is to let a caller
+     * override that cache on demand.
+     */
+    @Test
+    void shouldBypassNegativeCacheWhenForceUpdateIsSet(@TempDir final Path tempDir) throws IOException {
+        try (NotFoundTestRepoServer server = new NotFoundTestRepoServer()) {
+            final List<RemoteRepo> repos =
+                List.of(RemoteRepo.of("only-repo", "http://localhost:" + server.port()));
+
+            new PomResolver(new TelemetryPublisher(URI.create("maven://force-update-test-1"), telemetry -> { }),
+                tempDir, false, repos, Optional.empty(), false)
+                .resolveArtifact("test:missing:1.0");
+            assertThat(server.requestCount()).isEqualTo(1);
+
+            new PomResolver(new TelemetryPublisher(URI.create("maven://force-update-test-2"), telemetry -> { }),
+                tempDir, false, repos, Optional.empty(), true)
+                .resolveArtifact("test:missing:1.0");
+
+            assertThat(server.requestCount()).isEqualTo(2);
+        }
+    }
+
+    /**
      * With no remote repositories configured at all (e.g. {@code offline=false} but an empty repo
      * list), resolution must fail fast with a clear warning rather than attempting — and failing —
      * an HTTP request against an empty repo list, or worse, silently returning empty with no
@@ -619,7 +799,7 @@ public class PomResolverTests {
      * to tell "this doesn't exist anywhere" apart from "one repo is broken."
      */
     @Test
-    void shouldSummarizePerRepoAttemptsWhenAllReposReturn404(@org.junit.jupiter.api.io.TempDir final Path tempDir)
+    void shouldSummarizePerRepoAttemptsWhenAllReposReturn404(@TempDir final Path tempDir)
         throws IOException {
         try (NotFoundTestRepoServer server = new NotFoundTestRepoServer()) {
             final List<Telemetry> captured = new ArrayList<>();
@@ -648,7 +828,7 @@ public class PomResolverTests {
      */
     @Test
     void shouldFailFastWithNoRemoteRepositoriesConfiguredForSnapshot(
-        @org.junit.jupiter.api.io.TempDir final Path tempDir) {
+        @TempDir final Path tempDir) {
         final List<Telemetry> captured = new ArrayList<>();
         final PomResolver resolver = new PomResolver(
             new TelemetryPublisher(URI.create("maven://no-repos-snapshot-test"), captured::add),
@@ -672,7 +852,7 @@ public class PomResolverTests {
      */
     @Test
     void shouldSummarizePerRepoAttemptsWhenAllReposReturn404ForSnapshotMetadata(
-        @org.junit.jupiter.api.io.TempDir final Path tempDir) throws IOException {
+        @TempDir final Path tempDir) throws IOException {
         try (NotFoundTestRepoServer server = new NotFoundTestRepoServer()) {
             final List<Telemetry> captured = new ArrayList<>();
             final PomResolver resolver = new PomResolver(
@@ -688,6 +868,98 @@ public class PomResolverTests {
                 .filteredOn(Warning.class::isInstance)
                 .extracting(Telemetry::message)
                 .anyMatch(message -> message.contains("only-repo: not found (404)"));
+        }
+    }
+
+    /**
+     * A 404 for the actual timestamped SNAPSHOT jar — despite a successful {@code maven-metadata.xml}
+     * fetch naming that exact suffix — must leave a Maven-compatible {@code <artifact>.lastUpdated}
+     * marker next to where the jar would have landed, the same as the release-artifact case. This
+     * models the data-inconsistency case (metadata published, artifact not yet, or since removed)
+     * rather than a coordinate that plainly doesn't exist.
+     */
+    @Test
+    void shouldWriteLastUpdatedMarkerOnSnapshotArtifactNotFound(@TempDir final Path tempDir) throws IOException {
+        try (SnapshotTestRepoServer server =
+                 new SnapshotTestRepoServer("20260729.120000", "1", true)) {
+            final PomResolver resolver = new PomResolver(
+                new TelemetryPublisher(URI.create("maven://snapshot-marker-test"), telemetry -> { }),
+                tempDir,
+                false,
+                List.of(RemoteRepo.of("only-repo", "http://localhost:" + server.port())));
+
+            resolver.resolveArtifact("test:artifact:1.0-SNAPSHOT");
+
+            final Path marker = tempDir.resolve("test/artifact/1.0-SNAPSHOT/artifact-1.0-SNAPSHOT.jar.lastUpdated");
+            assertThat(marker).exists();
+            final Properties props = new Properties();
+            try (InputStream in = Files.newInputStream(marker)) {
+                props.load(in);
+            }
+            final String repoUrl = "http://localhost:" + server.port();
+            assertThat(props.getProperty(repoUrl + ".lastUpdated")).isNotNull();
+            assertThat(props.getProperty(repoUrl + ".error")).isNotNull().isNotEmpty();
+        }
+    }
+
+    /**
+     * The successful counterpart of {@link #shouldWriteLastUpdatedMarkerOnSnapshotArtifactNotFound}:
+     * a SNAPSHOT jar that downloads cleanly must leave a marker with {@code .lastUpdated} but no
+     * {@code .error} key, matching the release-artifact case.
+     */
+    @Test
+    void shouldNotWriteErrorKeyOnSuccessfulSnapshotDownload(@TempDir final Path tempDir) throws IOException {
+        try (SnapshotTestRepoServer server =
+                 new SnapshotTestRepoServer("20260729.120000", "1", "remote-bytes".getBytes(StandardCharsets.UTF_8))) {
+            final PomResolver resolver = new PomResolver(
+                new TelemetryPublisher(URI.create("maven://snapshot-marker-success-test"), telemetry -> { }),
+                tempDir,
+                false,
+                List.of(RemoteRepo.of("only-repo", "http://localhost:" + server.port())));
+
+            final Optional<Path> resolved = resolver.resolveArtifact("test:artifact:1.0-SNAPSHOT");
+
+            assertThat(resolved).isPresent();
+            final Path marker = tempDir.resolve("test/artifact/1.0-SNAPSHOT/artifact-1.0-SNAPSHOT.jar.lastUpdated");
+            assertThat(marker).exists();
+            final Properties props = new Properties();
+            try (InputStream in = Files.newInputStream(marker)) {
+                props.load(in);
+            }
+            final String repoUrl = "http://localhost:" + server.port();
+            assertThat(props.getProperty(repoUrl + ".lastUpdated")).isNotNull();
+            assertThat(props.getProperty(repoUrl + ".error")).isNull();
+        }
+    }
+
+    /**
+     * A marker recording a prior <em>success</em> (no {@code .error} key) must not be mistaken for a
+     * cached miss when the previously-downloaded jar is later removed from the local repository (e.g.
+     * a manual cleanup that deletes the artifact but leaves the sibling {@code .lastUpdated} marker
+     * behind) — the repository must be re-checked, not skipped, since it was never actually found
+     * missing.
+     */
+    @Test
+    void shouldRecheckRepoWhenSuccessMarkerSurvivesButArtifactWasDeleted(@TempDir final Path tempDir)
+        throws IOException {
+        try (NoChecksumTestRepoServer server = new NoChecksumTestRepoServer()) {
+            final List<RemoteRepo> repos =
+                List.of(RemoteRepo.of("only-repo", "http://localhost:" + server.port()));
+
+            new PomResolver(new TelemetryPublisher(URI.create("maven://survives-delete-test-1"), telemetry -> { }),
+                tempDir, false, repos)
+                .resolveArtifact("test:artifact:1.0");
+
+            final Path target = tempDir.resolve("test/artifact/1.0/artifact-1.0.jar");
+            assertThat(target).exists();
+            Files.delete(target);
+
+            final Optional<Path> resolved = new PomResolver(
+                new TelemetryPublisher(URI.create("maven://survives-delete-test-2"), telemetry -> { }),
+                tempDir, false, repos)
+                .resolveArtifact("test:artifact:1.0");
+
+            assertThat(resolved).isPresent();
         }
     }
 
@@ -765,9 +1037,74 @@ public class PomResolverTests {
 
         private final ServerSocket serverSocket;
         private final Thread thread;
+        private final AtomicInteger requestCount = new AtomicInteger();
         private volatile boolean running = true;
 
         NotFoundTestRepoServer() throws IOException {
+            this.serverSocket = new ServerSocket(0, 0, InetAddress.getLoopbackAddress());
+            this.thread = new Thread(this::serve);
+            this.thread.setDaemon(true);
+            this.thread.start();
+        }
+
+        int port() {
+            return this.serverSocket.getLocalPort();
+        }
+
+        int requestCount() {
+            return this.requestCount.get();
+        }
+
+        private void serve() {
+            while (this.running) {
+                try (Socket socket = this.serverSocket.accept()) {
+                    handle(socket);
+                } catch (final IOException e) {
+                    // expected once close() closes the server socket to unblock accept()
+                }
+            }
+        }
+
+        private void handle(final Socket socket) throws IOException {
+            this.requestCount.incrementAndGet();
+            final BufferedReader in = new BufferedReader(
+                new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII));
+            in.readLine(); // request line, unused: every request gets 404 regardless of path
+            String header;
+            while ((header = in.readLine()) != null && !header.isEmpty()) {
+                // discard request headers
+            }
+            final OutputStream out = socket.getOutputStream();
+            out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                .getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+        }
+
+        @Override
+        public void close() {
+            this.running = false;
+            try {
+                this.serverSocket.close();
+            } catch (final IOException ignored) {
+                // best-effort shutdown
+            }
+        }
+    }
+
+    /**
+     * A minimal single-purpose HTTP/1.1 server that serves a fixed body for any artifact request and
+     * a {@code 404} for its {@code .sha1} sidecar — modeling a repository that doesn't publish
+     * checksums, so {@link PomResolver#verifySha1} accepts the download unconditionally and the
+     * request reaches the successful (200) branch, unlike {@link TestRepoServer}, whose {@code .sha1}
+     * response is a deliberate 500 to exercise checksum-failure handling.
+     */
+    private static final class NoChecksumTestRepoServer implements AutoCloseable {
+
+        private final ServerSocket serverSocket;
+        private final Thread thread;
+        private volatile boolean running = true;
+
+        NoChecksumTestRepoServer() throws IOException {
             this.serverSocket = new ServerSocket(0, 0, InetAddress.getLoopbackAddress());
             this.thread = new Thread(this::serve);
             this.thread.setDaemon(true);
@@ -791,14 +1128,22 @@ public class PomResolverTests {
         private static void handle(final Socket socket) throws IOException {
             final BufferedReader in = new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII));
-            in.readLine(); // request line, unused: every request gets 404 regardless of path
+            final String requestLine = in.readLine();
             String header;
             while ((header = in.readLine()) != null && !header.isEmpty()) {
                 // discard request headers
             }
+            final String path = requestLine.split(" ")[1];
             final OutputStream out = socket.getOutputStream();
-            out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                .getBytes(StandardCharsets.US_ASCII));
+            if (path.endsWith(".sha1")) {
+                out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    .getBytes(StandardCharsets.US_ASCII));
+            } else {
+                final byte[] body = "jar-bytes".getBytes(StandardCharsets.UTF_8);
+                out.write(("HTTP/1.1 200 OK\r\nContent-Length: " + body.length + "\r\nConnection: close\r\n\r\n")
+                    .getBytes(StandardCharsets.US_ASCII));
+                out.write(body);
+            }
             out.flush();
         }
 
@@ -828,14 +1173,32 @@ public class PomResolverTests {
         private final AtomicInteger requestCount = new AtomicInteger();
         private final String metadataXml;
         private final byte[] artifactBytes;
+        private final boolean jarNotFound;
         private volatile boolean running = true;
 
         SnapshotTestRepoServer(final String timestamp, final String buildNumber, final byte[] artifactBytes)
             throws IOException {
+            this(timestamp, buildNumber, artifactBytes, false);
+        }
+
+        /**
+         * @param jarNotFound when {@code true}, the metadata request still succeeds but every
+         *                    {@code .jar} request 404s — modeling the data-inconsistency case where
+         *                    a repository's metadata names a suffix that isn't (yet, or any more)
+         *                    actually downloadable
+         */
+        SnapshotTestRepoServer(final String timestamp, final String buildNumber, final boolean jarNotFound)
+            throws IOException {
+            this(timestamp, buildNumber, new byte[0], jarNotFound);
+        }
+
+        private SnapshotTestRepoServer(final String timestamp, final String buildNumber, final byte[] artifactBytes,
+                                       final boolean jarNotFound) throws IOException {
             this.serverSocket = new ServerSocket(0, 0, InetAddress.getLoopbackAddress());
             this.metadataXml = "<metadata><versioning><snapshot><timestamp>" + timestamp
                 + "</timestamp><buildNumber>" + buildNumber + "</buildNumber></snapshot></versioning></metadata>";
             this.artifactBytes = artifactBytes;
+            this.jarNotFound = jarNotFound;
             this.thread = new Thread(this::serve);
             this.thread.setDaemon(true);
             this.thread.start();
@@ -875,7 +1238,11 @@ public class PomResolverTests {
             } else if (path.endsWith("maven-metadata.xml")) {
                 respond(out, 200, this.metadataXml.getBytes(StandardCharsets.UTF_8));
             } else if (path.endsWith(".jar")) {
-                respond(out, 200, this.artifactBytes);
+                if (this.jarNotFound) {
+                    respond(out, 404, new byte[0]);
+                } else {
+                    respond(out, 200, this.artifactBytes);
+                }
             } else {
                 respond(out, 404, new byte[0]);
             }

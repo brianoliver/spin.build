@@ -49,6 +49,7 @@ import build.spin.module.java.Java25CompilerPlugin;
 import build.spin.module.junit.Java25JUnitPlugin;
 import build.spin.option.EngineVersion;
 import build.spin.option.ExecutionSlots;
+import build.spin.option.ForceUpdate;
 import build.spin.option.JlinkTargets;
 import build.spin.option.NetworkAccess;
 import build.spin.option.OperatingSystem;
@@ -126,7 +127,7 @@ public class Spin {
 
     // ---------------------------------------------
 
-    private static ParseResult buildParser() {
+    static ParseResult buildParser() {
         final LinkedHashSet<String> tasks = new LinkedHashSet<>();
         final List<Class<?>> commandClasses = List.of(
             CleanPlugin.RemoveBuildPath.class,
@@ -172,6 +173,7 @@ public class Spin {
         final CommandLineParser parser = commandBuilder
             .option(EngineVersion.class)
             .option(NetworkAccess.class)
+            .option(ForceUpdate.class)
             .option(Verbose.class)
             .option(ServerMode.class)
             .option(ServerPort.class)
@@ -236,7 +238,7 @@ public class Spin {
             })));
     }
 
-    private record ParseResult(CommandLineParser parser, LinkedHashSet<String> tasks) {
+    record ParseResult(CommandLineParser parser, LinkedHashSet<String> tasks) {
     }
 
     private record Discovery(Workspace workspace, Project project) {
