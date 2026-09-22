@@ -88,7 +88,7 @@ class PomReaderTests {
             .findFirst()
             .orElseThrow();
 
-        assertThat(lib.scope()).isEqualTo("compile");
+        assertThat(lib.scope()).isEqualTo(DependencyScope.COMPILE);
     }
 
     /**
@@ -133,7 +133,7 @@ class PomReaderTests {
             .findFirst()
             .orElseThrow();
 
-        assertThat(lib.type()).isEqualTo("jar");
+        assertThat(lib.type()).isEqualTo(PackagingType.Standard.JAR);
     }
 
     /**

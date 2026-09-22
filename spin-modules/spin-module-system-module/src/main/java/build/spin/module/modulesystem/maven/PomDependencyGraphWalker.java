@@ -25,7 +25,9 @@ import build.base.version.Version;
 import build.base.version.VersionOrder;
 import build.codemodel.foundation.CodeModel;
 import build.spin.module.modulesystem.pom.Dependency;
+import build.spin.module.modulesystem.pom.DependencyScope;
 import build.spin.module.modulesystem.pom.Gav;
+import build.spin.module.modulesystem.pom.PackagingType;
 import build.spin.module.modulesystem.pom.Pom;
 import build.spin.module.modulesystem.pom.PomReader;
 
@@ -169,7 +171,7 @@ final class PomDependencyGraphWalker {
                 visitDependency(gav, localRepo, recorder, codeModel, visitor);
                 PomReader.localRepoPomPath(localRepo, gav)
                     .ifPresent(pomPath -> effectiveDependencyCoordinates(pomReader, pomPath).stream()
-                        .filter(d -> !"test".equals(d.scope()) && !"provided".equals(d.scope()))
+                        .filter(d -> d.scope() != DependencyScope.TEST && d.scope() != DependencyScope.PROVIDED)
                         .forEach(d -> enqueueIfNew(d, workspaceCoordinates, visited, moduleQueue, recorder)));
             }
 
@@ -182,7 +184,7 @@ final class PomDependencyGraphWalker {
      * A resolved dependency coordinate paired with its Maven scope, as emitted by
      * {@link #effectiveDependencyCoordinates} and carried through the BFS queue.
      */
-    private record ScopedDependency(Gav gav, String scope) {
+    private record ScopedDependency(Gav gav, DependencyScope scope) {
     }
 
     /**
@@ -230,7 +232,8 @@ final class PomDependencyGraphWalker {
             // Single-module root poms (packaging=jar or absent) must be registered so
             // their own version is in the map.
             final boolean isRootAggregator = pomPath.equals(rootPomPath)
-                && pomReader.read(pomPath).map(Pom::packaging).map("pom"::equals).orElse(false);
+                && pomReader.read(pomPath).map(Pom::packaging)
+                    .map(p -> p == PackagingType.Standard.POM).orElse(false);
             if (!isRootAggregator) {
                 visitSelf(pomReader, pomPath, recorder, visitor);
             }

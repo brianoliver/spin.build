@@ -45,9 +45,9 @@ public sealed interface Dependency
 
     Optional<String> version();
 
-    String scope();
+    DependencyScope scope();
 
-    String type();
+    PackagingType type();
 
     Optional<String> classifier();
 

@@ -31,6 +31,7 @@ import build.spin.Project;
 import build.spin.Resource;
 import build.spin.module.modulesystem.TestModuleDescriptor;
 import build.spin.module.modulesystem.pom.Dependency;
+import build.spin.module.modulesystem.pom.DependencyScope;
 import build.spin.module.modulesystem.pom.Pom;
 import jakarta.inject.Inject;
 
@@ -96,8 +97,8 @@ public class PomBasedTestModuleDescriptor
 
             for (final Dependency dep : pom.get().dependencies()) {
                 // exclude provided and system deps; include compile, runtime, and test
-                final String scope = dep.scope();
-                if ("provided".equals(scope) || "system".equals(scope)) {
+                final DependencyScope scope = dep.scope();
+                if (scope == DependencyScope.PROVIDED || scope == DependencyScope.SYSTEM) {
                     continue;
                 }
 

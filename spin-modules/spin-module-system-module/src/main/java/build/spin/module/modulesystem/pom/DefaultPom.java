@@ -31,7 +31,7 @@ import java.util.Optional;
  * @since Apr-2026
  */
 public record DefaultPom(Gav gav,
-                         String packaging,
+                         PackagingType packaging,
                          Optional<Pom> parent,
                          Map<String, String> properties,
                          Map<GA, Dependency> dependencyManagement,

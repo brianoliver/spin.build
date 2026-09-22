@@ -52,7 +52,7 @@ public sealed interface Pom
      * defaulting to {@code jar} when not declared. Unlike groupId/version, packaging is not
      * inherited from the parent.
      */
-    String packaging();
+    PackagingType packaging();
 
     /**
      * The parent pom, if any (resolved via {@code <relativePath>} or local-repo lookup).

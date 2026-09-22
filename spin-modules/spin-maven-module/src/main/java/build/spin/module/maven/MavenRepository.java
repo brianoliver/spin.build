@@ -38,6 +38,7 @@ import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleCatalog;
 import build.spin.module.modulesystem.ModuleReference;
 import build.spin.module.modulesystem.ModuleVersioning;
+import build.spin.module.modulesystem.pom.DependencyScope;
 import jakarta.inject.Inject;
 
 import java.nio.file.FileSystem;
@@ -257,18 +258,18 @@ public class MavenRepository
         final var resolved = this.maven.resolveArtifactDescriptor(artifact)
             .flatMap(dependencies -> {
                 dependencies.stream()
-                    .filter(d -> (d.scope().equals("compile")
-                        || d.scope().equals("runtime")
-                        || d.scope().equals("provided"))
+                    .filter(d -> (d.scope() == DependencyScope.COMPILE
+                        || d.scope() == DependencyScope.RUNTIME
+                        || d.scope() == DependencyScope.PROVIDED)
                         && !d.optional())
                     .forEach(d -> {
-                        final boolean isStatic = d.scope().equals("provided") || d.optional();
+                        final boolean isStatic = d.scope() == DependencyScope.PROVIDED || d.optional();
 
                         final Artifact requiredArtifact = Artifact.create(
                             d.groupId(),
                             d.artifactId(),
                             d.version().orElse(null),
-                            d.type(),
+                            d.type().raw(),
                             d.classifier().orElse(null));
 
                         final var reference = getModuleReference(requiredArtifact, catalog)

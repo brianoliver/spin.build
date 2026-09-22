@@ -22,8 +22,10 @@ package build.spin.module.maven;
 
 import build.base.telemetry.TelemetryRecorder;
 import build.spin.module.modulesystem.pom.Dependency;
+import build.spin.module.modulesystem.pom.DependencyScope;
 import build.spin.module.modulesystem.pom.GA;
 import build.spin.module.modulesystem.pom.Gav;
+import build.spin.module.modulesystem.pom.PackagingType;
 import build.spin.module.modulesystem.pom.Pom;
 import build.spin.module.modulesystem.pom.PomReader;
 
@@ -199,12 +201,12 @@ class PomResolver {
      * @return the local path, or empty if resolution fails
      */
     Optional<Path> resolveArtifact(final String coordinates) {
-        final Coordinates parsed = parseCoordinates(coordinates);
-        if (parsed == null) {
+        final Optional<Coordinates> parsed = parseCoordinates(coordinates);
+        if (parsed.isEmpty()) {
             this.recorder.error("Invalid Maven coordinates: %s", coordinates);
             return Optional.empty();
         }
-        return resolveArtifact(parsed);
+        return resolveArtifact(parsed.get());
     }
 
     /**
@@ -223,12 +225,12 @@ class PomResolver {
      * @return the effective direct {@link Dependency} list, or empty list on failure
      */
     List<Dependency> resolveDescriptor(final String coordinates) {
-        final Coordinates parsed = parseCoordinates(coordinates);
-        if (parsed == null) {
+        final Optional<Coordinates> parsed = parseCoordinates(coordinates);
+        if (parsed.isEmpty()) {
             this.recorder.error("Invalid Maven coordinates: %s", coordinates);
             return List.of();
         }
-        return resolveDescriptor(parsed.gav());
+        return resolveDescriptor(parsed.get().gav());
     }
 
     /**
@@ -285,12 +287,12 @@ class PomResolver {
      * @return list of local paths for the root artifact and all transitive deps
      */
     List<Path> resolveTransitive(final String coordinates) {
-        final Coordinates parsed = parseCoordinates(coordinates);
-        if (parsed == null) {
+        final Optional<Coordinates> parsed = parseCoordinates(coordinates);
+        if (parsed.isEmpty()) {
             this.recorder.error("Invalid Maven coordinates: %s", coordinates);
             return List.of();
         }
-        return resolveTransitive(parsed.gav(), parsed.extension());
+        return resolveTransitive(parsed.get().gav(), parsed.get().extension());
     }
 
     /**
@@ -339,10 +341,10 @@ class PomResolver {
             try {
                 final List<Dependency> deps = effectiveDependencies(node.gav());
                 for (final Dependency dep : deps) {
-                    final String depScope = dep.scope();
+                    final DependencyScope depScope = dep.scope();
                     if (dep.optional()
-                        || !"jar".equals(dep.type())
-                        || ("test".equals(depScope) || "system".equals(depScope))) {
+                        || dep.type() != PackagingType.Standard.JAR
+                        || (depScope == DependencyScope.TEST || depScope == DependencyScope.SYSTEM)) {
                         continue;
                     }
                     if (dep.version().isEmpty()
@@ -712,18 +714,18 @@ class PomResolver {
     /**
      * Parses Maven coordinates: {@code groupId:artifactId[:extension[:classifier]]:version}.
      *
-     * @return the parsed {@link Coordinates}, or null on parse failure
+     * @return the parsed {@link Coordinates}, or empty on parse failure
      */
-    static Coordinates parseCoordinates(final String coordinates) {
+    static Optional<Coordinates> parseCoordinates(final String coordinates) {
         if (coordinates == null || coordinates.isEmpty()) {
-            return null;
+            return Optional.empty();
         }
         final String[] parts = coordinates.split(":");
         return switch (parts.length) {
-            case 3 -> Coordinates.of(parts[0], parts[1], parts[2], "jar", null);
-            case 4 -> Coordinates.of(parts[0], parts[1], parts[3], parts[2], null);
-            case 5 -> Coordinates.of(parts[0], parts[1], parts[4], parts[2], parts[3]);
-            default -> null;
+            case 3 -> Optional.of(Coordinates.of(parts[0], parts[1], parts[2], "jar", null));
+            case 4 -> Optional.of(Coordinates.of(parts[0], parts[1], parts[3], parts[2], null));
+            case 5 -> Optional.of(Coordinates.of(parts[0], parts[1], parts[4], parts[2], parts[3]));
+            default -> Optional.empty();
         };
     }
 
