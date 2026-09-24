@@ -191,10 +191,11 @@ system-detected value).
 Option types (`build.spin.option`, all `build.base.configuration.Option`): `BuildDirectoryName`
 (`.build`), `TargetDirectoryName` (`target`), `EngineVersion` (from spin's own JPMS module descriptor),
 `ExecutionSlots` (`availableProcessors()`; invalid `spin.execution.slots` fails the build),
-`JlinkTargets` (`ALL_STAGED` default / `HOST_ONLY`), `NetworkAccess` (`ONLINE` default /
+`NetworkAccess` (`ONLINE` default /
 `OFFLINE`), `OperatingSystem`, `ReuseExternalBuildOutput` (`DISABLED` default),
 `Root` (repeatable — extra federated physical root), `ServerMode`, `ServerPort` (`8686`),
-`Verbose`.
+`Verbose`. (`jlink`'s own `host-only` setting isn't a CLI `Option` — it's a
+`.spin/build.spin.module.jlink.properties` value, resolved as part of `AbstractJavaLinker.JlinkOptions`.)
 
 ### `spin-common` — Engine Implementation (`build.spin.common`)
 
@@ -340,8 +341,9 @@ only — `jdeps` (`@Named jdeps`), `jlink` (`@Named jlink`). `ResourcePlugin`:
   `modules/` after `ModuleGraphClassifier.resolveConflicts`; `jdeps --list-deps
   --ignore-missing-deps --multi-release <major>`.
 - **jlink** (`AbstractJavaLinker`) — skips silently if no `void main(`. One image per
-  `JavaPlatform.targets()` (staging a foreign JDK is enough; `--jlink-host-only` restricts to
-  host). Reads target `jmods/` names by filename (`.jmod` can't be opened at runtime) via
+  `JavaPlatform.targets()` (staging a foreign JDK is enough; `host-only = true` in
+  `.spin/build.spin.module.jlink.properties` restricts to host). Reads target `jmods/` names by
+  filename (`.jmod` can't be opened at runtime) via
   `JmodModuleFinder`; runs jlink from a host-executable JDK. App modules that are automatic (or
   transitively require one) are "tainted" and stay on an external `--module-path` (`modules/`);
   the rest are packed into `lib/modules` via `--add-modules`. `stripForeignNatives` rewrites jars
@@ -538,14 +540,15 @@ build; `maven-dependency-plugin` `analyze-only` `failOnWarning` at `verify`.
 Bootstrap chain in `spin/pom.xml`, both bound to **`prepare-package`**:
 1. **Maven → spin₁** — the ordinary jar of `build.spin.application` + plugin modules.
 2. **spin₁ → spin₂** — `percolate-maven-exec-plugin` (`spin1-build-spin2`) runs
-   `build.spin.application.Spin` in-process with `clean jlink --jlink-host-only
-   --reuse-external-build-output` (siblings already compiled by the reactor). Output:
+   `build.spin.application.Spin` in-process with `clean jlink --reuse-external-build-output`
+   (siblings already compiled by the reactor; host-only linking comes from `spin`'s own
+   `.spin/build.spin.module.jlink.properties`, not a CLI flag). Output:
    `spin/.build/spin-<os>-<arch>/`.
 3. **spin₂ → spin₃ + verify** — `exec-maven-plugin` (`spin2-build-spin3`) runs
    `src/main/scripts/spin2-build-spin3.sh`: back up the host image, **purge every project's
    `.build/` and `target/classes`** (both are "already built" signals inspected when the
-   instruction graph is built — leaving them defeats the bootstrap), run `spin₂ clean jlink
-   --jlink-host-only`, copy the genuinely-recompiled output back to `target/classes`, then assert
+   instruction graph is built — leaving them defeats the bootstrap), run `spin₂ clean jlink`,
+   copy the genuinely-recompiled output back to `target/classes`, then assert
    **spin₂ ≡ spin₃** (identical `bin/spin.sh`, `--list-modules`, `modules/` and `classpath/`
    listings — jar *contents* aren't diffed because jars embed timestamps).
 4. `maven-assembly-plugin` (`package`) → `spin-<version>-bin.zip` (one runtime image per discovered

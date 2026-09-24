@@ -75,7 +75,9 @@ class SpinRuntimeIntegrationTests {
 
         final Path fixture = copyFixture("jlink-jdk-module");
 
-        final SpinRun run = runSpin(spinSh, fixture, "clean", "jlink", "--jlink-host-only");
+        // host-only linking is set via the fixture's own .spin/build.spin.module.jlink.properties,
+        // not a CLI flag
+        final SpinRun run = runSpin(spinSh, fixture, "clean", "jlink");
         assertThat(run.exitCode()).as("spin.sh clean jlink failed:%n%s", run.output()).isZero();
         assertThat(run.output())
             .as("expected no classify fallback warning:%n%s", run.output())

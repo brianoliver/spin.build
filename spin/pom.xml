@@ -227,7 +227,6 @@
                             <arguments>
                                 <argument>clean</argument>
                                 <argument>jlink</argument>
-                                <argument>--jlink-host-only</argument>
                                 <!-- spin1 already recompiled every sibling as part of this Maven reactor
                                      build; no point paying to recompile them again with spin's own javac
                                      here just to build spin2 -->
@@ -281,8 +280,9 @@
         <!--
       Dev-loop launcher: runs the *current* (uninstalled, un-jlinked) spin1 sources directly,
       instead of the self-hosting spin1-build-spin2-build-spin3 pipeline above (which always
-      hardcodes "clean jlink -jlink-host-only -reuse-external-build-output" and requires a
-      full install to try out). Off by default; invoke explicitly with -Pspin-dev.
+      hardcodes "clean jlink -reuse-external-build-output", with host-only linking set via this
+      module's own .spin/build.spin.module.jlink.properties, and requires a full install to try
+      out). Off by default; invoke explicitly with -Pspin-dev.
 
       Usage, from the spin.build root:
           ./mvnw -pl spin -am compile -Pspin-dev -Dpercolate.exec.args="-w /path/to/project jdeps"

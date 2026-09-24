@@ -539,7 +539,7 @@ public class CustomizationPlugin
                 // back into *this* JVM and cast to its build.spin.Task, so it has to be compiled for
                 // the running JVM's version (systemJavaVersion), not the project's configured target.
                 // JDK.current() would give exactly that, but it is not safe here: when this process
-                // is a self-hosted, --jlink-host-only spin runtime image, its own "JDK" is
+                // is a self-hosted, host-only-linked spin runtime image, its own "JDK" is
                 // application-only and has no javac. Prefer a JavaPlatform-discovered JDK of the
                 // running version, and fall back to JDK.current() only when discovery finds nothing.
                 final JDK javaDevelopmentKit = this.platform

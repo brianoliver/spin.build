@@ -50,7 +50,6 @@ import build.spin.module.junit.Java25JUnitPlugin;
 import build.spin.option.EngineVersion;
 import build.spin.option.ExecutionSlots;
 import build.spin.option.ForceUpdate;
-import build.spin.option.JlinkTargets;
 import build.spin.option.NetworkAccess;
 import build.spin.option.OperatingSystem;
 import build.spin.option.ReuseExternalBuildOutput;
@@ -177,7 +176,6 @@ public class Spin {
             .option(Verbose.class)
             .option(ServerMode.class)
             .option(ServerPort.class)
-            .option(JlinkTargets.class)
             .option(ExecutionSlots.class)
             .option(ReuseExternalBuildOutput.class)
             .build();
