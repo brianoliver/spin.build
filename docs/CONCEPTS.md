@@ -306,7 +306,6 @@ These are CLI-configurable values, injected wherever a `Task`/`Plugin` asks for 
 | `TargetDirectoryName` | `target` | Sub-directory name within a task's build output area (mirrors Maven's `target/` convention). |
 | `EngineVersion` | auto-detected from spin's own JPMS module descriptor | spin's own version. |
 | `ExecutionSlots` | `Runtime.availableProcessors()` (or the `spin.execution.slots` system property) | Bounds how many task bodies run concurrently — the size of the fair semaphore in §7. An invalid value fails the build. |
-| `JlinkTargets` | `ALL_STAGED` | `ALL_STAGED` / `HOST_ONLY` (`--jlink-host-only`) — whether `jlink` builds an image for every discovered target platform or just the host. |
 | `NetworkAccess` | `ONLINE` | `ONLINE`/`OFFLINE` — governs whether artifact resolution is allowed to hit the network. |
 | `OperatingSystem` | auto-detected | Used for OS-specific packaging/linking decisions. |
 | `ReuseExternalBuildOutput` | `DISABLED` | `ENABLED`/`DISABLED` — trust an existing Maven `target/classes` / Gradle output as equivalent to spin's own `.build/` output. |

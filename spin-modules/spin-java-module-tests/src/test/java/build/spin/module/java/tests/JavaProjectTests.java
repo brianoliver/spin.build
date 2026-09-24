@@ -55,7 +55,6 @@ import build.spin.module.modulesystem.TestModuleDescriptor;
 import build.spin.module.modulesystem.maven.PomBasedModuleCatalog;
 import build.spin.module.modulesystem.maven.PomBasedModuleVersioning;
 import build.spin.module.modulesystem.maven.PomBasedTestModuleDescriptor;
-import build.spin.option.JlinkTargets;
 import build.spin.option.ReuseExternalBuildOutput;
 import build.spin.testing.RequireJavaVersion;
 import build.spin.testing.WorkspaceDiscovery;
@@ -1039,7 +1038,8 @@ public class JavaProjectTests {
         throws Exception {
 
         // create a Program to build a jlink runtime image for the Workspace
-        final Program program = engine.createProgram(workspace, Task.Pattern.of("jlink"), JlinkTargets.HOST_ONLY);
+        // (host-only = true is set in the fixture's .spin/build.spin.module.jlink.properties)
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("jlink"));
 
         // create a Task ExecutionCache for the Program
         final AssetCache cache = DefaultAssetCache.create();
@@ -1081,7 +1081,8 @@ public class JavaProjectTests {
 
         // jlink refuses to run when --output already exists, so a second link of the same project
         // must clear the prior image first rather than failing with "directory already exists"
-        engine.createProgram(workspace, Task.Pattern.of("jlink"), JlinkTargets.HOST_ONLY)
+        // (host-only = true is set in the fixture's .spin/build.spin.module.jlink.properties)
+        engine.createProgram(workspace, Task.Pattern.of("jlink"))
             .execute(DefaultAssetCache.create());
 
         final Path packagePath = workspace.path().resolve(".build")
@@ -1090,7 +1091,7 @@ public class JavaProjectTests {
 
         // a fresh Program and AssetCache force the linker to actually rerun rather than being
         // cache-short-circuited
-        engine.createProgram(workspace, Task.Pattern.of("jlink"), JlinkTargets.HOST_ONLY)
+        engine.createProgram(workspace, Task.Pattern.of("jlink"))
             .execute(DefaultAssetCache.create());
 
         assertThat(packagePath).as("expected the runtime image to be relinked in place").isDirectory();

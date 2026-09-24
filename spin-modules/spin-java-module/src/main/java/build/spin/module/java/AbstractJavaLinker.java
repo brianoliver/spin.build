@@ -42,7 +42,6 @@ import build.spin.common.ProcessRunner;
 import build.spin.module.configuration.Source;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleReference;
-import build.spin.option.JlinkTargets;
 import jakarta.inject.Inject;
 import jakarta.inject.Named;
 
@@ -88,23 +87,30 @@ public abstract class AbstractJavaLinker
 
     private static final String MAIN_CLASS_KEY = "main-class";
 
+    /**
+     * The {@code .spin/build.spin.module.jlink.properties} settings for this {@link Task}, resolved
+     * as a single {@link build.spin.module.configuration.Configuration} record instead of one
+     * {@code @Named} field per key.
+     *
+     * @param enableNativeAccess the {@code enable-native-access} module, if any
+     * @param mainClassOverride  the {@link #MAIN_CLASS_KEY} override, if any
+     * @param processName        the {@code process-name} to rename the linked {@code java} executable to, if any
+     * @param hostOnly           whether to link only the host's own platform, skipping any other staged
+     *                           JDK targets — used by spin's own self-hosting bootstrap to skip
+     *                           cross-target linking it doesn't need
+     */
+    public record JlinkOptions(@Named("enable-native-access") Optional<String> enableNativeAccess,
+                               @Named(MAIN_CLASS_KEY) Optional<String> mainClassOverride,
+                               @Named("process-name") Optional<String> processName,
+                               @Named("host-only") Optional<Boolean> hostOnly) {
+    }
+
     @Inject
     private TelemetryRecorder recorder;
 
     @Inject
     @build.spin.module.configuration.Configuration
-    @Named("enable-native-access")
-    private Optional<String> enableNativeAccess;
-
-    @Inject
-    @build.spin.module.configuration.Configuration
-    @Named(MAIN_CLASS_KEY)
-    private Optional<String> mainClassOverride;
-
-    @Inject
-    @build.spin.module.configuration.Configuration
-    @Named("process-name")
-    private Optional<String> processName;
+    private JlinkOptions options;
 
     @Inject
     private JavaPlatform platform;
@@ -122,12 +128,6 @@ public abstract class AbstractJavaLinker
     @System
     private JDKVersion systemJavaVersion;
 
-    // controls whether jlink() below links every staged JDK target or just the host's own —
-    // see JlinkTargets.HOST_ONLY, used by spin's own self-hosting bootstrap to skip cross-target
-    // linking it doesn't need
-    @Inject
-    private JlinkTargets jlinkTargets;
-
     /**
      * Execute {@code jlink} on this {@link Project}, once per {@link TargetPlatform} a {@link JavaPlatform#targets()}
      * {@link JDK} is available for, i.e. staging a foreign-platform {@link JDK} is sufficient to have a runtime
@@ -143,7 +143,7 @@ public abstract class AbstractJavaLinker
         throws Exception {
 
         // jlink only makes sense for executable applications. Skip silently for library modules.
-        final Optional<String> mainClass = detectMainClass(this.project.path(), this.mainClassOverride, this.recorder);
+        final Optional<String> mainClass = detectMainClass(this.project.path(), this.options.mainClassOverride(), this.recorder);
         if (mainClass.isEmpty()) {
             this.recorder.diagnostic("Skipping jlink for [%s]: no main class found", this.project.path());
             return Set.of();
@@ -153,9 +153,9 @@ public abstract class AbstractJavaLinker
         // - no special-cased flat path, so targets never collide or nest inside one another
         final var hostTarget = JavaPlatform.hostTarget();
 
-        // HOST_ONLY (spin's own self-hosting bootstrap) skips iterating every staged JDK target and
+        // host-only (spin's own self-hosting bootstrap) skips iterating every staged JDK target and
         // links just the host's own, so a build only needs its own JDK staged, not every cross-target one
-        final var targets = this.jlinkTargets == JlinkTargets.HOST_ONLY
+        final var targets = this.options.hostOnly().orElse(false)
             ? List.of(hostTarget)
             : this.platform.targets().toList();
         if (targets.isEmpty()) {
@@ -438,7 +438,8 @@ public abstract class AbstractJavaLinker
             }
 
             if (isHostTarget) {
-                dumpBaseCdsArchive(packagePath, rootModule, mainClass, modulePath, classPathTargets, this.enableNativeAccess);
+                dumpBaseCdsArchive(packagePath, rootModule, mainClass, modulePath, classPathTargets,
+                    this.options.enableNativeAccess());
             }
 
             // ---------
@@ -452,8 +453,8 @@ public abstract class AbstractJavaLinker
             // exec a file that is itself named processName, so make a real copy of the freshly
             // linked java binary under that name; ScriptTemplate.jt execs it directly instead of
             // "java" when configured.
-            if (this.processName.isPresent()) {
-                final var name = this.processName.get();
+            if (this.options.processName().isPresent()) {
+                final var name = this.options.processName().get();
                 final var javaExecutable = scriptPath.resolve("java");
                 if (!Files.isRegularFile(javaExecutable)) {
                     throw new IllegalStateException(
@@ -475,7 +476,7 @@ public abstract class AbstractJavaLinker
 
             try (var writer = Files.newBufferedWriter(scriptPath.resolve(scriptName))) {
                 new ScriptTemplate(classPath, !tainted.isEmpty(), rootModule, mainClass, packageName,
-                    this.enableNativeAccess.orElse(null), this.processName.orElse(null))
+                    this.options.enableNativeAccess().orElse(null), this.options.processName().orElse(null))
                     .render(new TextOut(writer));
             }
 

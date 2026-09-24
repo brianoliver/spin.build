@@ -36,7 +36,7 @@ find "$REPO_ROOT" -mindepth 2 -maxdepth 3 -type d -name .build -print0 | while I
   fi
 done
 
-/tmp/spin2/bin/spin.sh clean jlink --jlink-host-only
+/tmp/spin2/bin/spin.sh clean jlink
 
 # spin₂ has now genuinely recompiled every sibling from source into its own
 # .build/main/target; copy each one back into Maven's target/classes so
