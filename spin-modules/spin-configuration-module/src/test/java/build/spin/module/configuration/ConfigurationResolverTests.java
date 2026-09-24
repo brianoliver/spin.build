@@ -806,4 +806,287 @@ class ConfigurationResolverTests {
         assertThat(example.properties).isNotNull();
         assertThat(example.properties.get("message")).isEqualTo("hello world");
     }
+
+    /**
+     * A {@link Record} of {@code @Named} {@link Configuration} values, used to test {@code record} injection.
+     */
+    private record Server(@Named("server/port") Integer port,
+                          @Named("server/verbose") Boolean verbose,
+                          @Named("server/missing") Optional<String> missing) {
+    }
+
+    /**
+     * Ensure a {@link Record} can be resolved by resolving each of its {@code @Named} components from a
+     * {@code .json} file and constructing the record from them.
+     */
+    @Test
+    void shouldResolveRecordFromJsonFile() {
+
+        class Example {
+
+            @Inject
+            @Configuration
+            @Source("config.json")
+            Server server;
+        }
+
+        final var example = createContext().inject(new Example());
+
+        assertThat(example).isNotNull();
+        assertThat(example.server).isNotNull();
+        assertThat(example.server.port()).isEqualTo(8080);
+        assertThat(example.server.verbose()).isTrue();
+        assertThat(example.server.missing()).isEmpty();
+    }
+
+    /**
+     * Ensure an {@link Optional} {@link Record} can be resolved.
+     */
+    @Test
+    void shouldResolveOptionalRecordFromJsonFile() {
+
+        class Example {
+
+            @Inject
+            @Configuration
+            @Source("config.json")
+            Optional<Server> server;
+        }
+
+        final var example = createContext().inject(new Example());
+
+        assertThat(example).isNotNull();
+        assertThat(example.server).isPresent();
+        assertThat(example.server.get().port()).isEqualTo(8080);
+    }
+
+    /**
+     * A {@link Record} with a bare (non-{@link Optional}) component whose {@code @Named} value doesn't exist
+     * in the {@link Configuration} file, used to test that the whole record is left unresolved.
+     */
+    private record ServerWithMissingRequiredValue(@Named("server/port") Integer port,
+                                                  @Named("server/missing") String missing) {
+    }
+
+    /**
+     * Ensure a required (non-{@link Optional}) {@link Record} component whose value doesn't exist causes the
+     * whole record to be treated as an unsatisfied {@link Dependency}, rather than constructing the record with
+     * a {@code null} argument.
+     */
+    @Test
+    void shouldNotResolveRecordWhenARequiredComponentValueIsMissing() {
+
+        class Example {
+
+            @Inject
+            @Configuration
+            @Source("config.json")
+            ServerWithMissingRequiredValue server;
+        }
+
+        Assertions.assertThrows(UnsatisfiedDependencyException.class, () -> createContext().inject(new Example()));
+    }
+
+    /**
+     * A {@link Record} with a component that isn't annotated {@code @Named}, used to test that resolving such a
+     * record fails fast.
+     */
+    private record ServerWithoutNamedComponent(Integer port) {
+    }
+
+    /**
+     * Ensure resolving a {@link Record} with a component that isn't annotated {@code @Named} throws.
+     */
+    @Test
+    void shouldNotResolveRecordWithoutNamedComponent() {
+
+        class Example {
+
+            @Inject
+            @Configuration
+            @Source("config.json")
+            ServerWithoutNamedComponent server;
+        }
+
+        Assertions.assertThrows(IllegalStateException.class, () -> createContext().inject(new Example()));
+    }
+
+    /**
+     * A {@link Record} whose component is itself a {@link Record}, used to test that nested records are
+     * resolved recursively without needing a {@code @Named} value of their own.
+     */
+    private record Config(Server server, @Named("message") String message) {
+    }
+
+    /**
+     * Ensure a {@link Record} component that's itself a {@link Record} is resolved recursively, rather than
+     * requiring a {@code @Named} value for the nested record itself.
+     */
+    @Test
+    void shouldResolveNestedRecordFromJsonFile() {
+
+        class Example {
+
+            @Inject
+            @Configuration
+            @Source("config.json")
+            Config config;
+        }
+
+        final var example = createContext().inject(new Example());
+
+        assertThat(example).isNotNull();
+        assertThat(example.config).isNotNull();
+        assertThat(example.config.server().port()).isEqualTo(8080);
+        assertThat(example.config.server().verbose()).isTrue();
+        assertThat(example.config.message()).isEqualTo("hello world");
+    }
+
+    /**
+     * A {@link Record} whose compact constructor always throws, used to test that a failure constructing the
+     * record (as opposed to failing to resolve its components) is wrapped in a {@link RuntimeException} with a
+     * clear message, rather than leaking the raw reflective failure.
+     */
+    private record AlwaysInvalidRecord(@Named("server/port") Integer port) {
+
+        private AlwaysInvalidRecord {
+            throw new IllegalStateException("always invalid");
+        }
+    }
+
+    /**
+     * Ensure a failure constructing a {@link Record} (its compact constructor throwing) is wrapped in a
+     * {@link RuntimeException} that names the {@link Record} {@link Class}.
+     */
+    @Test
+    void shouldWrapConstructorFailureWhenResolvingRecord() {
+
+        class Example {
+
+            @Inject
+            @Configuration
+            @Source("config.json")
+            AlwaysInvalidRecord invalid;
+        }
+
+        final var exception = Assertions.assertThrows(
+            RuntimeException.class, () -> createContext().inject(new Example()));
+
+        assertThat(exception).hasMessageContaining("Failed to construct Configuration record");
+    }
+
+    /**
+     * Ensure an {@link Optional} {@link Record} whose bare (non-{@link Optional}) component's value doesn't exist
+     * resolves to {@link Optional#empty()}, rather than throwing or constructing the record with a {@code null}
+     * argument.
+     */
+    @Test
+    void shouldResolveOptionalRecordAsEmptyWhenARequiredComponentValueIsMissing() {
+
+        class Example {
+
+            @Inject
+            @Configuration
+            @Source("config.json")
+            Optional<ServerWithMissingRequiredValue> server;
+        }
+
+        final var example = createContext().inject(new Example());
+
+        assertThat(example).isNotNull();
+        assertThat(example.server).isEmpty();
+    }
+
+    /**
+     * A {@link Record} whose nested {@link Record} component ({@link ServerWithMissingRequiredValue}) has a
+     * bare component whose value doesn't exist, used to test that the failure propagates out of the nested
+     * record to the enclosing one.
+     */
+    private record ConfigWithMissingNestedValue(ServerWithMissingRequiredValue server,
+                                                @Named("message") String message) {
+    }
+
+    /**
+     * Ensure a missing required value on a nested {@link Record} component causes the whole enclosing
+     * {@link Record} to be treated as an unsatisfied {@link Dependency}, not just the nested one.
+     */
+    @Test
+    void shouldNotResolveRecordWhenANestedRecordComponentValueIsMissing() {
+
+        class Example {
+
+            @Inject
+            @Configuration
+            @Source("config.json")
+            ConfigWithMissingNestedValue config;
+        }
+
+        Assertions.assertThrows(UnsatisfiedDependencyException.class, () -> createContext().inject(new Example()));
+    }
+
+    /**
+     * A {@link Record} whose component is an {@link Optional}-wrapped {@link Record}, used to test that a nested
+     * {@link Optional} {@link Record} component is resolved recursively, the same as a bare nested {@link Record}
+     * component, without needing a {@code @Named} value of its own.
+     */
+    private record ConfigWithOptionalNestedRecord(Optional<Server> server, @Named("message") String message) {
+    }
+
+    /**
+     * Ensure a {@link Record} component that's an {@link Optional}-wrapped {@link Record} is resolved recursively
+     * when its value is present.
+     */
+    @Test
+    void shouldResolveNestedOptionalRecordFromJsonFile() {
+
+        class Example {
+
+            @Inject
+            @Configuration
+            @Source("config.json")
+            ConfigWithOptionalNestedRecord config;
+        }
+
+        final var example = createContext().inject(new Example());
+
+        assertThat(example).isNotNull();
+        assertThat(example.config).isNotNull();
+        assertThat(example.config.server()).isPresent();
+        assertThat(example.config.server().get().port()).isEqualTo(8080);
+        assertThat(example.config.server().get().verbose()).isTrue();
+        assertThat(example.config.message()).isEqualTo("hello world");
+    }
+
+    /**
+     * A {@link Record} whose component is an {@link Optional}-wrapped {@link Record}
+     * ({@link ServerWithMissingRequiredValue}) that has a bare component whose value doesn't exist, used to test
+     * that the nested {@link Optional} {@link Record} resolves to {@link Optional#empty()} rather than failing
+     * the enclosing {@link Record}.
+     */
+    private record ConfigWithMissingOptionalNestedValue(Optional<ServerWithMissingRequiredValue> server,
+                                                        @Named("message") String message) {
+    }
+
+    /**
+     * Ensure a missing required value on an {@link Optional}-wrapped nested {@link Record} component resolves that
+     * component to {@link Optional#empty()}, rather than failing the whole enclosing {@link Record}.
+     */
+    @Test
+    void shouldResolveOptionalNestedRecordAsEmptyWhenARequiredComponentValueIsMissing() {
+
+        class Example {
+
+            @Inject
+            @Configuration
+            @Source("config.json")
+            ConfigWithMissingOptionalNestedValue config;
+        }
+
+        final var example = createContext().inject(new Example());
+
+        assertThat(example).isNotNull();
+        assertThat(example.config).isNotNull();
+        assertThat(example.config.server()).isEmpty();
+        assertThat(example.config.message()).isEqualTo("hello world");
+    }
 }

@@ -43,6 +43,8 @@ import build.spin.common.util.AnnotationValues;
 import jakarta.inject.Named;
 
 import java.io.IOException;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.RecordComponent;
 import java.nio.file.FileSystem;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -382,6 +384,83 @@ public class ConfigurationResolver
         return ValueBinding.of(dep, val);
     }
 
+    /**
+     * Constructs an instance of the specified {@link Record} {@link Class} by resolving each of its
+     * components as its own {@code @Named} {@link Configuration} value (against the same source
+     * {@link #resolveSource(Dependency) file(s)} as {@code dependency} itself), then invoking the
+     * record's canonical constructor with the resolved values.
+     * <p>
+     * A component whose type is itself a {@link Record} (bare, or wrapped in {@link Optional}) is resolved
+     * by recursing into this method rather than requiring a {@code @Named} value of its own; every other
+     * component must be annotated {@code @Named}. When a bare (non-{@link Optional}) component's value
+     * can't be resolved, the whole record is left unresolved ({@link Optional#empty()}), so that the
+     * {@link Dependency} is treated as unsatisfied the same way it would be for a non-record value.
+     *
+     * @param dependency  the {@link Dependency} whose {@link #resolveSource(Dependency) source file}
+     *                    the record's components are resolved against
+     * @param recordClass the {@link Record} {@link Class} to construct
+     * @return an {@link Optional} containing the constructed record instance, or {@link Optional#empty()}
+     * if a bare (non-{@link Optional}) component's value couldn't be resolved
+     */
+    private Optional<Object> resolveRecord(final Dependency dependency, final Class<?> recordClass) {
+        final var components = recordClass.getRecordComponents();
+        final var parameterTypes = new Class<?>[components.length];
+        final var args = new Object[components.length];
+
+        for (int i = 0; i < components.length; i++) {
+            final var component = components[i];
+            parameterTypes[i] = component.getType();
+
+            if (component.getType().isRecord()) {
+                final var nested = resolveRecord(dependency, component.getType());
+                if (nested.isEmpty()) {
+                    return Optional.empty();
+                }
+                args[i] = nested.get();
+            } else if (component.getType().equals(Optional.class)) {
+                if (!(component.getGenericType() instanceof ParameterizedType parameterizedType)) {
+                    throw new IllegalStateException("Configuration record component [" + component
+                        + "] must be a parameterized Optional");
+                }
+                final var valueType = (Class<?>) parameterizedType.getActualTypeArguments()[0];
+                args[i] = valueType.isRecord()
+                    ? resolveRecord(dependency, valueType)
+                    : getValues(dependency, valueType, Optional.of(requireNamed(component).value())).stream().findFirst();
+            } else {
+                final var value = getValues(dependency, component.getType(), Optional.of(requireNamed(component).value()))
+                    .stream().findFirst();
+                if (value.isEmpty()) {
+                    return Optional.empty();
+                }
+                args[i] = value.get();
+            }
+        }
+
+        try {
+            final var constructor = recordClass.getDeclaredConstructor(parameterTypes);
+            constructor.setAccessible(true);
+            return Optional.of(constructor.newInstance(args));
+        } catch (final ReflectiveOperationException e) {
+            throw new RuntimeException("Failed to construct Configuration record [" + recordClass + "]", e);
+        }
+    }
+
+    /**
+     * Obtains the {@code @Named} annotation of the specified {@link Record} component, throwing when it isn't
+     * annotated.
+     *
+     * @param component the {@link RecordComponent} to inspect
+     * @return the {@link Named} annotation
+     */
+    private static Named requireNamed(final RecordComponent component) {
+        final var named = component.getAnnotation(Named.class);
+        if (named == null) {
+            throw new IllegalStateException("Configuration record component [" + component
+                + "] must be annotated @Named");
+        }
+        return named;
+    }
+
     @Override
     public Optional<? extends Binding<Object>> resolve(final Dependency dependency) {
 
@@ -408,9 +487,12 @@ public class ConfigurationResolver
         }
 
         if (requiredClass.equals(Optional.class)) {
-            // obtain the Optional<T> configuration to be injected
+            // obtain the Optional<T> configuration to be injected; a T that's a Record is resolved
+            // component-by-component (see #resolveRecord), the same as it would be if it were required
             return firstTypeArg(dependency)
-                .map(type -> getValues(dependency, type, name).stream().findFirst())
+                .map(type -> type.isRecord()
+                    ? resolveRecord(dependency, type)
+                    : getValues(dependency, type, name).stream().findFirst())
                 .map(val -> bind(dependency, (Object) val));
         } else if (requiredClass.equals(Hierarchical.class)) {
             // obtain the list of values in the hierarchy
@@ -433,6 +515,10 @@ public class ConfigurationResolver
             };
 
             return Optional.of(bind(dependency, hierarchical));
+        } else if (requiredClass.isRecord()) {
+            // a record groups several named values behind one injection point - resolve each of its
+            // components as if it were its own @Named dependency, then construct the record from them
+            return resolveRecord(dependency, requiredClass).map(val -> bind(dependency, val));
         } else {
             // obtain the T configuration (or specifically named value) to be injected
             return getValues(dependency, requiredClass, name).stream()
