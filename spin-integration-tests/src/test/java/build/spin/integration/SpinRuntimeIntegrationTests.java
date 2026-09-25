@@ -64,6 +64,13 @@ class SpinRuntimeIntegrationTests {
         // ModuleFinder over the *target* JDK's real jmods/ directory, not ModuleFinder.ofSystem()
         // -- this spin process's own module set, which genuinely lacks jdk.jdwp.agent once spin
         // links its own dev-tool-free runtime image (asserted below).
+        //
+        // Also doubles as regression coverage for the `add-modules` jlink config (see the
+        // fixture's .spin/build.spin.module.jlink.properties, which sets `add-modules =
+        // java.sql`): it must supplement the auto-computed module set rather than replace it, for
+        // modules jlink has no way to infer are needed on its own (e.g. a reflectively-loaded
+        // service provider module). Piggybacking here instead of a second fixture avoids a second,
+        // expensive `clean jlink` invocation.
 
         final Path spinSh = requireSpinSh();
 
@@ -93,6 +100,12 @@ class SpinRuntimeIntegrationTests {
         final String modules = runListModules(packagePath);
         assertThat(modules).as("expected jdk.jdwp.agent linked into the produced image:%n%s", modules)
             .contains("jdk.jdwp.agent");
+
+        // java.sql is not required by the fixture's root module or any linked jar -- it only ends
+        // up in the produced image if `add-modules = java.sql` from the fixture's own properties
+        // is actually honored by AbstractJavaLinker.
+        assertThat(modules).as("expected java.sql linked into the produced image via add-modules:%n%s", modules)
+            .contains("java.sql");
     }
 
     @Test

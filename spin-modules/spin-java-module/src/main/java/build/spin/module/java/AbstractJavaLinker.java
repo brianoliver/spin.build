@@ -55,6 +55,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -98,11 +99,28 @@ public abstract class AbstractJavaLinker
      * @param hostOnly           whether to link only the host's own platform, skipping any other staged
      *                           JDK targets — used by spin's own self-hosting bootstrap to skip
      *                           cross-target linking it doesn't need
+     * @param addModules         a comma-separated list of extra module names to pass to jlink's
+     *                           {@code --add-modules}, supplementing (not replacing) the module set
+     *                           already computed from the platform and linked application jars
+     * @param compress           the jlink {@code --compress} level, defaulting to {@code zip-6} when absent
+     * @param vm                 the jlink {@code --vm} variant (e.g. {@code server}, {@code client},
+     *                           {@code minimal}), defaulting to {@code server} when absent
+     * @param bindServices       whether to pass jlink's {@code --bind-services}, linking in every service
+     *                           provider module found on the module path rather than only those reachable
+     *                           from {@code --add-modules}
+     * @param stripDebug         whether to pass jlink's {@code --strip-debug}; when absent, defaults to
+     *                           stripping only when linking the host's own target (see {@link #linkForTarget}
+     *                           for why a foreign target can't safely strip)
      */
     public record JlinkOptions(@Named("enable-native-access") Optional<String> enableNativeAccess,
                                @Named(MAIN_CLASS_KEY) Optional<String> mainClassOverride,
                                @Named("process-name") Optional<String> processName,
-                               @Named("host-only") Optional<Boolean> hostOnly) {
+                               @Named("host-only") Optional<Boolean> hostOnly,
+                               @Named("add-modules") Optional<String> addModules,
+                               @Named("compress") Optional<String> compress,
+                               @Named("vm") Optional<String> vm,
+                               @Named("bind-services") Optional<Boolean> bindServices,
+                               @Named("strip-debug") Optional<Boolean> stripDebug) {
     }
 
     @Inject
@@ -175,6 +193,15 @@ public abstract class AbstractJavaLinker
                 classificationCache));
         }
         return images;
+    }
+
+    // Package-private (rather than private) so tests can exercise the merge directly, without
+    // going through linkForTarget()'s full jlink-executable invocation.
+    static void addSupplementalModules(final Set<String> addModules, final Optional<String> csv) {
+        csv.ifPresent(list -> Arrays.stream(list.split(","))
+            .map(String::trim)
+            .filter(module -> !module.isEmpty())
+            .forEach(addModules::add));
     }
 
     // Package-private (rather than private) so classifyCached()'s test can reference it directly.
@@ -321,13 +348,17 @@ public abstract class AbstractJavaLinker
                 .filter(Objects::nonNull)
                 .map(ModuleDescriptor::name)
                 .forEach(addModules::add);
+            // supplements (never replaces) the auto-computed set above, for modules jlink can't
+            // otherwise infer are needed, e.g. a reflectively-loaded service provider module
+            addSupplementalModules(addModules, this.options.addModules());
 
             final var recordingObserver = new RecordingSubscriber<String>();
             final ErrorCapture captured = new ErrorCapture();
 
             // jlink's --strip-debug shells out to the host's native objcopy, which can't parse a foreign
             // target's binaries (e.g. running x86_64 objcopy against aarch64 or Mach-O native libraries) —
-            // only strip when linking the host's own target.
+            // only strip when linking the host's own target by default. The strip-debug property can force
+            // it either way; forcing it on for a foreign target is on the caller — it will fail there.
             //
             // Deliberately NOT using jlink's own --generate-cds-archive plugin: it dumps the base archive
             // generically, with no knowledge of how the image is actually launched, so it records
@@ -344,14 +375,17 @@ public abstract class AbstractJavaLinker
                 .add(Argument.of("--module-path")).add(Argument.of(jlinkModulePath))
                 .add(Argument.of("--output")).add(Argument.of(packagePath))
                 .add(Argument.of("--add-modules")).add(Argument.of(String.join(",", addModules)));
-            if (isHostTarget) {
+            if (this.options.stripDebug().orElse(isHostTarget)) {
                 jlinkConfiguration.add(Argument.of("--strip-debug"));
+            }
+            if (this.options.bindServices().orElse(false)) {
+                jlinkConfiguration.add(Argument.of("--bind-services"));
             }
             jlinkConfiguration
                 .add(Argument.of("--no-header-files"))
                 .add(Argument.of("--no-man-pages"))
-                .add(Argument.of("--compress")).add(Argument.of("zip-6"))
-                .add(Argument.of("--vm")).add(Argument.of("server"));
+                .add(Argument.of("--compress")).add(Argument.of(this.options.compress().orElse("zip-6")))
+                .add(Argument.of("--vm")).add(Argument.of(this.options.vm().orElse("server")));
 
             final int exitCode;
 

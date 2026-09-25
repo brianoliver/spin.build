@@ -39,6 +39,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -475,6 +476,36 @@ class AbstractJavaLinkerTest {
             .render(out);
 
         assertThat(out.toString()).contains("exec $SCRIPTPATH/myapp ");
+    }
+
+    // --- addSupplementalModules ---
+
+    @Test
+    void addSupplementalModules_leavesSetUnchangedWhenAbsent() {
+        final Set<String> addModules = new LinkedHashSet<>(Set.of("java.base"));
+        AbstractJavaLinker.addSupplementalModules(addModules, Optional.empty());
+        assertThat(addModules).containsExactly("java.base");
+    }
+
+    @Test
+    void addSupplementalModules_parsesAndTrimsCommaSeparatedList() {
+        final Set<String> addModules = new LinkedHashSet<>(Set.of("java.base"));
+        AbstractJavaLinker.addSupplementalModules(addModules, Optional.of(" java.sql , java.naming"));
+        assertThat(addModules).containsExactly("java.base", "java.sql", "java.naming");
+    }
+
+    @Test
+    void addSupplementalModules_skipsEmptyTokensFromTrailingOrDoubleCommas() {
+        final Set<String> addModules = new LinkedHashSet<>();
+        AbstractJavaLinker.addSupplementalModules(addModules, Optional.of("java.sql,,java.naming,"));
+        assertThat(addModules).containsExactly("java.sql", "java.naming");
+    }
+
+    @Test
+    void addSupplementalModules_doesNotDuplicateAModuleAlreadyPresent() {
+        final Set<String> addModules = new LinkedHashSet<>(Set.of("java.sql"));
+        AbstractJavaLinker.addSupplementalModules(addModules, Optional.of("java.sql,java.naming"));
+        assertThat(addModules).containsExactly("java.sql", "java.naming");
     }
 
     // --- classifyCached ---
