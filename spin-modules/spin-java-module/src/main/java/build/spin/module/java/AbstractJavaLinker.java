@@ -48,6 +48,7 @@ import jakarta.inject.Named;
 import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.lang.classfile.ClassFile;
 import java.lang.module.Configuration;
 import java.lang.module.ModuleDescriptor;
 import java.lang.module.ModuleFinder;
@@ -472,8 +473,14 @@ public abstract class AbstractJavaLinker
             }
 
             if (isHostTarget) {
+                // mainClass is detected from this project's own module (detectMainClass() above), not
+                // from a dependency, so its compiled class file lives in this module's own artifact --
+                // analysis.dependencies() (candidatePaths) never includes that, only what it requires
+                final List<Path> previewSearchPaths = new ArrayList<>();
+                analysis.dependency().artifactDescriptor().path().ifPresent(previewSearchPaths::add);
+                previewSearchPaths.addAll(candidatePaths);
                 dumpBaseCdsArchive(packagePath, rootModule, mainClass, modulePath, classPathTargets,
-                    this.options.enableNativeAccess());
+                    this.options.enableNativeAccess(), isCompiledWithPreview(previewSearchPaths, mainClass));
             }
 
             // ---------
@@ -674,15 +681,18 @@ public abstract class AbstractJavaLinker
                                     final String mainClass,
                                     final Path modulePath,
                                     final List<Path> classPathTargets,
-                                    final Optional<String> enableNativeAccess) {
+                                    final Optional<String> enableNativeAccess,
+                                    final boolean enablePreview) {
         final var recordingObserver = new RecordingSubscriber<String>();
         final ErrorCapture captured = new ErrorCapture();
 
         final ConfigurationBuilder configuration = ConfigurationBuilder.create()
             .add(JDKTools.executable(packagePath, "java"))
             .add(Name.of("java"))
-            .add(Argument.of("--enable-preview"))
             .add(Argument.of("-Xshare:dump"));
+        if (enablePreview) {
+            configuration.add(Argument.of("--enable-preview"));
+        }
         enableNativeAccess.ifPresent(modules -> configuration.add(Argument.of("--enable-native-access=" + modules)));
         if (Files.isDirectory(modulePath)) {
             configuration.add(Argument.of("--module-path"));
@@ -759,6 +769,32 @@ public abstract class AbstractJavaLinker
             }
         } catch (final IOException e) {
             return false;
+        }
+        return false;
+    }
+
+    // Determines whether mainClass's own .class file was compiled with preview features (javac
+    // stamps ClassFile.PREVIEW_MINOR_VERSION there for a preview release, and the JVM refuses to
+    // load such a class at runtime without --enable-preview). This reads the fact straight off the
+    // actual compiled bytecode instead of asking any of spin's own configuration -- the compiler's
+    // own {@code build.spin.module.compile.properties} enable-preview override (or a Maven pom's
+    // <enablePreview>) only proxies this decision and could drift from it, whereas the class file
+    // itself cannot. Best-effort: mainClass not found in any jar, or a jar/class that can't be
+    // parsed, reports false.
+    // package-private for testing
+    static boolean isCompiledWithPreview(final List<Path> jars, final String mainClass) {
+        final String entryName = mainClass.replace('.', '/') + ".class";
+        for (final var jar : jars) {
+            try (var zf = new ZipFile(jar.toFile())) {
+                final var entry = zf.getEntry(entryName);
+                if (entry == null) {
+                    continue;
+                }
+                final var classModel = ClassFile.of().parse(zf.getInputStream(entry).readAllBytes());
+                return classModel.minorVersion() == ClassFile.PREVIEW_MINOR_VERSION;
+            } catch (final IOException | IllegalArgumentException e) {
+                // not a readable jar, or not a valid class file -- keep looking
+            }
         }
         return false;
     }

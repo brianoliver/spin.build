@@ -33,6 +33,7 @@ import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.lang.classfile.ClassFile;
 import java.lang.classfile.attribute.ModuleAttribute;
+import java.lang.constant.ClassDesc;
 import java.lang.constant.ModuleDesc;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
@@ -381,6 +382,62 @@ class AbstractJavaLinkerTest {
         final var jar = buildJar("org/example/Foo.class", "com/foo/Bar.class");
         assertThat(AbstractJavaLinker.stripForeignNatives(jar, "Linux", "x86_64")).isFalse();
         assertThat(jarEntryNames(jar)).containsExactlyInAnyOrder("org/example/Foo.class", "com/foo/Bar.class");
+    }
+
+    // --- isCompiledWithPreview ---
+
+    // builds a minimal, loadable class file for the given binary name, optionally stamped with
+    // ClassFile.PREVIEW_MINOR_VERSION (bytes 4-5 of every class file) the way javac marks a class
+    // compiled with --enable-preview
+    private byte[] classBytes(final String binaryName, final boolean preview) {
+        final byte[] bytes = ClassFile.of().build(ClassDesc.of(binaryName), cb -> { });
+        if (preview) {
+            bytes[4] = (byte) 0xFF;
+            bytes[5] = (byte) 0xFF;
+        }
+        return bytes;
+    }
+
+    private Path buildJarWithClass(final String fileName, final String binaryName, final boolean preview)
+        throws IOException {
+        final Path jar = this.tempDir.resolve(fileName);
+        try (var jos = new JarOutputStream(Files.newOutputStream(jar))) {
+            jos.putNextEntry(new JarEntry(binaryName.replace('.', '/') + ".class"));
+            jos.write(classBytes(binaryName, preview));
+            jos.closeEntry();
+        }
+        return jar;
+    }
+
+    @Test
+    void isCompiledWithPreview_returnsTrueWhenMainClassStampedWithPreviewMinorVersion() throws IOException {
+        final Path jar = buildJarWithClass("app.jar", "com.example.App", true);
+        assertThat(AbstractJavaLinker.isCompiledWithPreview(List.of(jar), "com.example.App")).isTrue();
+    }
+
+    @Test
+    void isCompiledWithPreview_returnsFalseForOrdinaryClass() throws IOException {
+        final Path jar = buildJarWithClass("app.jar", "com.example.App", false);
+        assertThat(AbstractJavaLinker.isCompiledWithPreview(List.of(jar), "com.example.App")).isFalse();
+    }
+
+    @Test
+    void isCompiledWithPreview_returnsFalseWhenMainClassNotFoundInAnyJar() throws IOException {
+        final Path jar = buildJarWithClass("app.jar", "com.example.Other", true);
+        assertThat(AbstractJavaLinker.isCompiledWithPreview(List.of(jar), "com.example.App")).isFalse();
+    }
+
+    @Test
+    void isCompiledWithPreview_returnsFalseInsteadOfThrowingForUnreadableJar() throws IOException {
+        final Path notAJar = Files.writeString(this.tempDir.resolve("not-a-jar.jar"), "not a zip file");
+        assertThat(AbstractJavaLinker.isCompiledWithPreview(List.of(notAJar), "com.example.App")).isFalse();
+    }
+
+    @Test
+    void isCompiledWithPreview_skipsUnreadableJarAndFindsMatchInLaterOne() throws IOException {
+        final Path notAJar = Files.writeString(this.tempDir.resolve("not-a-jar.jar"), "not a zip file");
+        final Path jar = buildJarWithClass("app.jar", "com.example.App", true);
+        assertThat(AbstractJavaLinker.isCompiledWithPreview(List.of(notAJar, jar), "com.example.App")).isTrue();
     }
 
     // --- detectMainClass ---
