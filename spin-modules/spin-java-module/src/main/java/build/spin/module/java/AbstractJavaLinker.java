@@ -633,7 +633,7 @@ public abstract class AbstractJavaLinker
                 tainted.add(jar);
                 continue;
             }
-            final var closure = ModuleGraphClassifier.closeOverRequires(modulePathJars, Set.of(descriptor.name()));
+            final var closure = ModuleGraphClassifier.closeOverRequires(modulePathJars, Set.of(descriptor.name()), this.recorder::info);
             if (closure.stream().anyMatch(automaticNames::contains)) {
                 tainted.add(jar);
             }
