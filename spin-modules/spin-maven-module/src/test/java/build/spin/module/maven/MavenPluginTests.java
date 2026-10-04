@@ -24,6 +24,10 @@ import build.base.io.PathSet;
 import build.base.telemetry.TelemetryRecorder;
 import build.codemodel.dependency.injection.InjectionFramework;
 import build.codemodel.dependency.injection.TypeLiteral;
+import build.codemodel.foundation.naming.NonCachingNameProvider;
+import build.codemodel.jdk.JDKCodeModel;
+import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
+import build.spawn.jdk.JDK;
 import build.spawn.platform.local.LocalMachine;
 import build.spin.Project;
 import build.spin.Resource;
@@ -33,17 +37,24 @@ import build.spin.module.configuration.Configuration;
 import build.spin.module.gpg.SignableResource;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ArtifactDescriptor;
+import build.spin.module.modulesystem.ModuleCatalog;
 import build.spin.module.modulesystem.ModuleReference;
+import build.spin.module.modulesystem.ModuleVersioning;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.xml.parsers.DocumentBuilderFactory;
 
@@ -130,6 +141,68 @@ class MavenPluginTests {
 
         // no SignableResource is present, so there's nothing to assert against other than that
         // create() didn't throw attempting to register with one
+    }
+
+    /**
+     * Ensure {@link MavenPlugin.CreatePOMDocument} marks a {@code requires static} dependency as
+     * {@code <optional>true</optional>} inside its own {@code <dependency>} — and nowhere else.
+     */
+    @Test
+    void shouldMarkRequiresStaticDependencyAsOptional(@TempDir final Path tempDir)
+        throws Exception {
+
+        final var codeModel = new JDKCodeModel(new NonCachingNameProvider());
+        final var descriptor = JDKModuleDescriptor.parse(codeModel,
+            "module test.module { requires static dep.optional; requires dep.regular; }");
+
+        final var version = ModuleVersioning.DEFAULT_VERSION;
+
+        final var catalog = ModuleCatalog.HeapBased.create();
+        catalog.add("test.module", Artifact.Constraint.of(Artifact.create("group", "test", version.toString(), "jar")));
+        catalog.add("dep.optional", Artifact.create("group", "optional", version.toString(), "jar"));
+        catalog.add("dep.regular", Artifact.create("group", "regular", version.toString(), "jar"));
+
+        final ModuleVersioning versioning = moduleName -> Optional.of(version);
+
+        final var project = mock(Project.class);
+        when(project.path()).thenReturn(tempDir);
+
+        final var context = InjectionFramework.create().newContext();
+        context.bind(DocumentBuilderFactory.class).to(DocumentBuilderFactory.newInstance());
+        context.bind(Project.class).to(project);
+        context.bind(JDKModuleDescriptor.class).to(descriptor);
+        context.bind(JDK.class).to(JDK.current());
+        context.bind(ModuleCatalog.class).to(catalog);
+        context.bind(ModuleVersioning.class).to(versioning);
+
+        final var document = context.create(MavenPlugin.CreatePOMDocument.class).create(Optional.empty());
+
+        final var dependencies = (Element) document.getElementsByTagName("dependencies").item(0);
+
+        // <optional> must not be a direct child of <dependencies>
+        assertThat(directChildren(dependencies, "optional"))
+            .isEmpty();
+
+        final var dependenciesByArtifactId = directChildren(dependencies, "dependency").stream()
+            .collect(Collectors.toMap(
+                dependency -> dependency.getElementsByTagName("artifactId").item(0).getTextContent(),
+                dependency -> dependency));
+
+        assertThat(directChildren(dependenciesByArtifactId.get("optional"), "optional"))
+            .extracting(Node::getTextContent)
+            .containsExactly("true");
+        assertThat(directChildren(dependenciesByArtifactId.get("regular"), "optional"))
+            .isEmpty();
+    }
+
+    private static List<Element> directChildren(final Element parent, final String name) {
+        final var children = new ArrayList<Element>();
+        for (var node = parent.getFirstChild(); node != null; node = node.getNextSibling()) {
+            if (node instanceof Element element && element.getTagName().equals(name)) {
+                children.add(element);
+            }
+        }
+        return children;
     }
 
     private static Document minimalDocument()
