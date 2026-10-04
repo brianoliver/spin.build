@@ -290,7 +290,7 @@ public class MavenPlugin
                     if (require.traits(RequiresModifier.class).anyMatch(m -> m == RequiresModifier.STATIC)) {
                         final Node optionalNode = document.createElement("optional");
                         optionalNode.setTextContent("true");
-                        dependenciesNode.appendChild(optionalNode);
+                        dependencyNode.appendChild(optionalNode);
                     }
 
                     return dependencyNode;
