@@ -292,6 +292,7 @@ class SpinRuntimeIntegrationTests {
         git(directory, "init", "--quiet");
         git(directory, "add", ".");
         git(directory, "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
+            "-c", "core.hooksPath=" + directory.resolve("no-hooks"),
             "commit", "--quiet", "-m", "initial");
         return git(directory, "rev-parse", "--short", "HEAD");
     }

@@ -103,6 +103,7 @@ class GitRevisionTest {
         git("init", "--quiet");
         git("add", "tracked.txt");
         git("-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
+            "-c", "core.hooksPath=" + this.tempDir.resolve("no-hooks"),
             "commit", "--quiet", "-m", "initial");
         return git("rev-parse", "HEAD");
     }
