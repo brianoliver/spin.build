@@ -35,6 +35,7 @@ import java.util.List;
 import java.util.Locale;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * End-to-end tests that launch the real, already-built spin runtime image
@@ -71,6 +72,10 @@ class SpinRuntimeIntegrationTests {
         // modules jlink has no way to infer are needed on its own (e.g. a reflectively-loaded
         // service provider module). Piggybacking here instead of a second fixture avoids a second,
         // expensive `clean jlink` invocation.
+        //
+        // Likewise covers stamping the git revision onto the workspace's own SNAPSHOT module (the
+        // fixture is a 1.0.0-SNAPSHOT committed to a throwaway git repository), so the image reports
+        // which commit it was linked from.
 
         final Path spinSh = requireSpinSh();
 
@@ -81,6 +86,8 @@ class SpinRuntimeIntegrationTests {
             .doesNotContain("jdk.jdwp.agent");
 
         final Path fixture = copyFixture("jlink-jdk-module");
+        assumeTrue(gitIsAvailable(), "git is not available");
+        final String revision = commitFixtureToNewGitRepository(fixture);
 
         // host-only linking is set via the fixture's own .spin/build.spin.module.jlink.properties,
         // not a CLI flag
@@ -106,6 +113,12 @@ class SpinRuntimeIntegrationTests {
         // is actually honored by AbstractJavaLinker.
         assertThat(modules).as("expected java.sql linked into the produced image via add-modules:%n%s", modules)
             .contains("java.sql");
+
+        // the fixture's own module is a SNAPSHOT of a clean working tree, so its version is stamped with
+        // exactly the committed revision (no "-dirty"); the JDK modules around it are left untouched
+        assertThat(modules.lines())
+            .as("expected the app module stamped with git revision [%s]:%n%s", revision, modules)
+            .contains("app@1.0.0-SNAPSHOT+" + revision);
     }
 
     @Test
@@ -260,6 +273,40 @@ class SpinRuntimeIntegrationTests {
             .start();
         final String output = new String(process.getInputStream().readAllBytes());
         assertThat(process.waitFor()).as("bin/java --list-modules failed:%n%s", output).isZero();
+        return output;
+    }
+
+    private static boolean gitIsAvailable() {
+        try {
+            return new ProcessBuilder("git", "--version").start().waitFor() == 0;
+        } catch (final IOException | InterruptedException e) {
+            return false;
+        }
+    }
+
+    // initializes a git repository in the directory, commits everything in it, and returns the abbreviated
+    // hash of that commit
+    private static String commitFixtureToNewGitRepository(final Path directory)
+        throws IOException, InterruptedException {
+
+        git(directory, "init", "--quiet");
+        git(directory, "add", ".");
+        git(directory, "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
+            "commit", "--quiet", "-m", "initial");
+        return git(directory, "rev-parse", "--short", "HEAD");
+    }
+
+    private static String git(final Path directory, final String... arguments)
+        throws IOException, InterruptedException {
+
+        final List<String> command = new ArrayList<>(List.of("git"));
+        command.addAll(List.of(arguments));
+        final Process process = new ProcessBuilder(command)
+            .directory(directory.toFile())
+            .redirectErrorStream(true)
+            .start();
+        final String output = new String(process.getInputStream().readAllBytes()).trim();
+        assertThat(process.waitFor()).as("git %s failed:%n%s", String.join(" ", arguments), output).isZero();
         return output;
     }
 
