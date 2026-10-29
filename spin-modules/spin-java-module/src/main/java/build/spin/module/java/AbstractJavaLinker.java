@@ -353,14 +353,7 @@ public abstract class AbstractJavaLinker
                             staged.getFileName(), p.osDir(), p.archDir());
                     }
                 }
-                final var moduleDescriptor = descriptorsByPath.get(jar);
-                if (revision.isPresent()
-                    && moduleDescriptor != null
-                    && workspaceModules.contains(moduleDescriptor.name())
-                    && stampModuleVersion(staged, revision.get().buildMetadata())) {
-                    this.recorder.info("stamped %s with git revision %s",
-                        moduleDescriptor.name(), revision.get().buildMetadata());
-                }
+                stampWorkspaceModule(staged, descriptorsByPath.get(jar), revision, workspaceModules);
             }
 
             // the host's jlink no longer implicitly resolves platform modules from "itself" the way it did
@@ -493,6 +486,12 @@ public abstract class AbstractJavaLinker
                         this.recorder.info("stripped foreign native platforms from %s (kept %s/%s)",
                             destination.getFileName(), p.osDir(), p.archDir());
                     }
+                }
+                // a tainted workspace module stays on the external module-path, where its version is just as
+                // observable as in the image, so it is stamped like a linked one; a classpath jar's
+                // module-info is ignored, so there is no module version to stamp
+                if (isTainted) {
+                    stampWorkspaceModule(destination, descriptorsByPath.get(source), revision, workspaceModules);
                 }
                 if (isClassPath) {
                     classPathTargets.add(destination);
@@ -1003,6 +1002,23 @@ public abstract class AbstractJavaLinker
             .map(JavaPlugin::getModuleDescriptor)
             .map(moduleDescriptor -> moduleDescriptor.moduleName().toString())
             .collect(Collectors.toSet());
+    }
+
+    // Stamps the copy of a jar with the git revision when it is one of the workspace's own modules.
+    // The descriptor is null for a jar ModuleFinder can't interpret as a module.
+    private void stampWorkspaceModule(final Path copy,
+                                      final ModuleDescriptor moduleDescriptor,
+                                      final Optional<GitRevision> revision,
+                                      final Set<String> workspaceModules)
+        throws IOException {
+
+        if (revision.isPresent()
+            && moduleDescriptor != null
+            && workspaceModules.contains(moduleDescriptor.name())
+            && stampModuleVersion(copy, revision.get().buildMetadata())) {
+            this.recorder.info("stamped %s with git revision %s",
+                moduleDescriptor.name(), revision.get().buildMetadata());
+        }
     }
 
     // The SNAPSHOT qualifier marking a module version as a development build, as opposed to a release.

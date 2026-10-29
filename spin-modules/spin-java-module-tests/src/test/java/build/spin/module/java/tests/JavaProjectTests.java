@@ -64,6 +64,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.module.ModuleFinder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -81,6 +82,7 @@ import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.fail;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Tests for Java-based Spin-based {@link Project}s.
@@ -1072,6 +1074,51 @@ public class JavaProjectTests {
         final Path script = packagePath.resolve("bin/jlink-tainted.sh");
         assertThat(script).exists();
         assertThat(Files.readString(script)).contains("-XX:+AutoCreateSharedArchive");
+    }
+
+    @Test
+    @WorkspacePath("jlink-tainted")
+    void shouldStampGitRevisionOntoTaintedWorkspaceModule(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        // the fixture is a 1.0.0-SNAPSHOT that is built where it sits, inside whatever git checkout this
+        // test is running from, so the revision to expect is that checkout's HEAD
+        final String head = headRevisionOf(workspace.path());
+        assumeTrue(head != null, "git is not available or the workspace is not in a git working tree");
+
+        engine.createProgram(workspace, Task.Pattern.of("jlink"))
+            .execute(DefaultAssetCache.create());
+
+        // the root module requires the automatic javax.inject, so it is tainted: it is left external to the
+        // image on the runtime module-path rather than linked, and must be stamped there all the same
+        final Path modulePath = workspace.path().resolve(".build")
+            .resolve(workspace.name() + "-" + JavaPlatform.hostTarget())
+            .resolve("modules");
+        final String version = ModuleFinder.of(modulePath).find("app")
+            .orElseThrow(() -> new AssertionError("expected module [app] under [" + modulePath + "]"))
+            .descriptor()
+            .rawVersion()
+            .orElseThrow(() -> new AssertionError("expected module [app] to declare a version"));
+
+        // the working tree may or may not be dirty, so only the hash is asserted
+        assertThat(version).startsWith("1.0.0-SNAPSHOT+" + head);
+    }
+
+    // the abbreviated HEAD hash of the git working tree containing the directory, or null when it can't be determined
+    private static String headRevisionOf(final Path directory) {
+        try {
+            final Process process = new ProcessBuilder("git", "rev-parse", "--short", "HEAD")
+                .directory(directory.toFile())
+                .redirectErrorStream(true)
+                .start();
+            final String output = new String(process.getInputStream().readAllBytes()).trim();
+            return process.waitFor() == 0 && !output.isEmpty() ? output : null;
+        } catch (final IOException e) {
+            return null;
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        }
     }
 
     @Test
