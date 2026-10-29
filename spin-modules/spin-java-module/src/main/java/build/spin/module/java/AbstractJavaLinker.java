@@ -48,7 +48,10 @@ import jakarta.inject.Named;
 import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.lang.classfile.Attributes;
 import java.lang.classfile.ClassFile;
+import java.lang.classfile.attribute.ModuleAttribute;
+import java.lang.classfile.constantpool.Utf8Entry;
 import java.lang.module.Configuration;
 import java.lang.module.ModuleDescriptor;
 import java.lang.module.ModuleFinder;
@@ -67,6 +70,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
+import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
@@ -112,6 +116,11 @@ public abstract class AbstractJavaLinker
      * @param stripDebug         whether to pass jlink's {@code --strip-debug}; when absent, defaults to
      *                           stripping only when linking the host's own target (see {@link #linkForTarget}
      *                           for why a foreign target can't safely strip)
+     * @param stampGitRevision   whether to append the git revision as build metadata to the version of the
+     *                           workspace's own {@code -SNAPSHOT} modules in the image; defaults to
+     *                           {@code true}, and {@code false} also skips running {@code git}; the revision
+     *                           is that of the repository containing the project being linked, so a workspace
+     *                           spanning multiple repositories is not supported
      */
     public record JlinkOptions(@Named("enable-native-access") Optional<String> enableNativeAccess,
                                @Named(MAIN_CLASS_KEY) Optional<String> mainClassOverride,
@@ -121,7 +130,8 @@ public abstract class AbstractJavaLinker
                                @Named("compress") Optional<String> compress,
                                @Named("vm") Optional<String> vm,
                                @Named("bind-services") Optional<Boolean> bindServices,
-                               @Named("strip-debug") Optional<Boolean> stripDebug) {
+                               @Named("strip-debug") Optional<Boolean> stripDebug,
+                               @Named("stamp-git-revision") Optional<Boolean> stampGitRevision) {
     }
 
     @Inject
@@ -188,10 +198,17 @@ public abstract class AbstractJavaLinker
         // and its "N module-path jar(s) depend on automatic modules" diagnostic once per target.
         final Map<Set<String>, ClassificationResult> classificationCache = new LinkedHashMap<>();
 
+        // stamped onto the image's workspace SNAPSHOT modules (see stampModuleVersion), so a development
+        // build can report which commit it is; the same for every target, so determined once
+        final Optional<GitRevision> revision = this.options.stampGitRevision().orElse(true)
+            ? GitRevision.detect(this.machine, this.project.path(), this.recorder)
+            : Optional.empty();
+        final Set<String> workspaceModules = revision.isPresent() ? workspaceModuleNames() : Set.of();
+
         final Set<Path> images = new LinkedHashSet<>();
         for (final var target : targets) {
             images.add(linkForTarget(buildPath, analysis, mainClass.get(), target, target.equals(hostTarget),
-                classificationCache));
+                classificationCache, revision, workspaceModules));
         }
         return images;
     }
@@ -217,7 +234,9 @@ public abstract class AbstractJavaLinker
                                final String mainClass,
                                final TargetPlatform target,
                                final boolean isHostTarget,
-                               final Map<Set<String>, ClassificationResult> classificationCache)
+                               final Map<Set<String>, ClassificationResult> classificationCache,
+                               final Optional<GitRevision> revision,
+                               final Set<String> workspaceModules)
         throws Exception {
 
         // establish the name of the package and script
@@ -334,6 +353,7 @@ public abstract class AbstractJavaLinker
                             staged.getFileName(), p.osDir(), p.archDir());
                     }
                 }
+                stampWorkspaceModule(staged, descriptorsByPath.get(jar), revision, workspaceModules);
             }
 
             // the host's jlink no longer implicitly resolves platform modules from "itself" the way it did
@@ -466,6 +486,12 @@ public abstract class AbstractJavaLinker
                         this.recorder.info("stripped foreign native platforms from %s (kept %s/%s)",
                             destination.getFileName(), p.osDir(), p.archDir());
                     }
+                }
+                // a tainted workspace module stays on the external module-path, where its version is just as
+                // observable as in the image, so it is stamped like a linked one; a classpath jar's
+                // module-info is ignored, so there is no module version to stamp
+                if (isTainted) {
+                    stampWorkspaceModule(destination, descriptorsByPath.get(source), revision, workspaceModules);
                 }
                 if (isClassPath) {
                     classPathTargets.add(destination);
@@ -966,6 +992,149 @@ public abstract class AbstractJavaLinker
             }
         }
         return true;
+    }
+
+    // The JPMS names of the modules built from this workspace's own projects, as opposed to the external
+    // (Maven repository) modules the image also links.
+    private Set<String> workspaceModuleNames() {
+        return this.project.workspace().stream()
+            .flatMap(workspaceProject -> workspaceProject.getPlugin(JavaCompilerPlugin.class).stream())
+            .map(JavaPlugin::getModuleDescriptor)
+            .map(moduleDescriptor -> moduleDescriptor.moduleName().toString())
+            .collect(Collectors.toSet());
+    }
+
+    // Stamps the copy of a jar with the git revision when it is one of the workspace's own modules.
+    // The descriptor is null for a jar ModuleFinder can't interpret as a module.
+    private void stampWorkspaceModule(final Path copy,
+                                      final ModuleDescriptor moduleDescriptor,
+                                      final Optional<GitRevision> revision,
+                                      final Set<String> workspaceModules)
+        throws IOException {
+
+        if (revision.isPresent()
+            && moduleDescriptor != null
+            && workspaceModules.contains(moduleDescriptor.name())
+            && stampModuleVersion(copy, revision.get().buildMetadata())) {
+            this.recorder.info("stamped %s with git revision %s",
+                moduleDescriptor.name(), revision.get().buildMetadata());
+        }
+    }
+
+    // The SNAPSHOT qualifier marking a module version as a development build, as opposed to a release.
+    private static final String SNAPSHOT_SUFFIX = "-SNAPSHOT";
+
+    // Appends "+<buildMetadata>" to the version of the module-info.class in the jar (including any
+    // multi-release variants), when that version is a SNAPSHOT; a release version is left as-is so a
+    // release reports exactly the version it was released as.
+    //
+    // This is applied to the staged copy of a jar that is about to be linked into an image, never to the
+    // compiled output or the published artifact: Version.equals() includes build metadata, so a stamped
+    // jar resolved as a dependency would no longer match its own (unstamped) pom coordinates.
+    //
+    // Returns true if the jar was modified.
+    // package-private for testing
+    static boolean stampModuleVersion(final Path jar, final String buildMetadata)
+        throws IOException {
+
+        final Map<String, byte[]> stamped = new LinkedHashMap<>();
+        final var tmp = Files.createTempFile(jar.getParent(), jar.getFileName().toString(), ".tmp");
+        try {
+            try (var zf = new ZipFile(jar.toFile())) {
+                for (final var e = zf.entries(); e.hasMoreElements();) {
+                    final var entry = e.nextElement();
+                    if (isModuleInfo(entry.getName())) {
+                        try (var is = zf.getInputStream(entry)) {
+                            stampModuleInfo(is.readAllBytes(), buildMetadata)
+                                .ifPresent(bytes -> stamped.put(entry.getName(), bytes));
+                        }
+                    }
+                }
+                if (stamped.isEmpty()) {
+                    Files.delete(tmp);
+                    return false;
+                }
+                try (var out = new ZipOutputStream(new BufferedOutputStream(Files.newOutputStream(tmp)))) {
+                    for (final var e = zf.entries(); e.hasMoreElements();) {
+                        final var entry = e.nextElement();
+                        final var replacement = stamped.get(entry.getName());
+                        if (replacement != null) {
+                            out.putNextEntry(copyOf(entry, replacement));
+                            out.write(replacement);
+                        } else {
+                            out.putNextEntry(copyOf(entry, null));
+                            try (var is = zf.getInputStream(entry)) {
+                                is.transferTo(out);
+                            }
+                        }
+                        out.closeEntry();
+                    }
+                }
+            }
+            // after the source jar is closed, so the replacement also works where an open file can't be replaced
+            Files.move(tmp, jar, StandardCopyOption.REPLACE_EXISTING);
+        } catch (final IOException | RuntimeException e) {
+            Files.deleteIfExists(tmp);
+            throw e;
+        }
+        return true;
+    }
+
+    // A new entry carrying the name, compression method, timestamps and comment of the original, so rewriting a
+    // jar doesn't reset them. The sizes are left for the ZipOutputStream to compute (a DEFLATED entry's
+    // compressed size may differ after recompression, and a replaced entry's content differs), except that a
+    // STORED entry requires them up front, taken from the replacement bytes when there are any.
+    private static ZipEntry copyOf(final ZipEntry original, final byte[] replacement) {
+        final var copy = new ZipEntry(original.getName());
+        copy.setMethod(original.getMethod());
+        if (original.getLastModifiedTime() != null) {
+            copy.setLastModifiedTime(original.getLastModifiedTime());
+        }
+        copy.setComment(original.getComment());
+        if (original.getMethod() == ZipEntry.STORED) {
+            if (replacement == null) {
+                copy.setSize(original.getSize());
+                copy.setCompressedSize(original.getSize());
+                copy.setCrc(original.getCrc());
+            } else {
+                final var crc = new CRC32();
+                crc.update(replacement);
+                copy.setSize(replacement.length);
+                copy.setCompressedSize(replacement.length);
+                copy.setCrc(crc.getValue());
+            }
+        }
+        return copy;
+    }
+
+    // module-info.class at the jar root, or in a multi-release variant under META-INF/versions/<n>/
+    private static boolean isModuleInfo(final String entryName) {
+        return entryName.equals("module-info.class")
+            || (entryName.startsWith("META-INF/versions/") && entryName.endsWith("/module-info.class"));
+    }
+
+    // Returns the module-info.class bytes with "+<buildMetadata>" appended to the module version, or empty
+    // when there is nothing to stamp: not a module descriptor, no declared version, or not a SNAPSHOT
+    // (which also makes stamping idempotent, as a stamped version no longer ends in "-SNAPSHOT").
+    // package-private for testing
+    static Optional<byte[]> stampModuleInfo(final byte[] moduleInfo, final String buildMetadata) {
+        final var model = ClassFile.of().parse(moduleInfo);
+        final var version = model.findAttribute(Attributes.module())
+            .flatMap(ModuleAttribute::moduleVersion)
+            .map(Utf8Entry::stringValue)
+            .filter(v -> v.endsWith(SNAPSHOT_SUFFIX));
+        if (version.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(ClassFile.of().transformClass(model, (builder, element) -> {
+            if (element instanceof ModuleAttribute module) {
+                builder.with(ModuleAttribute.of(module.moduleName(), module.moduleFlagsMask(),
+                    builder.constantPool().utf8Entry(version.get() + "+" + buildMetadata),
+                    module.requires(), module.exports(), module.opens(), module.uses(), module.provides()));
+            } else {
+                builder.with(element);
+            }
+        }));
     }
 
 }

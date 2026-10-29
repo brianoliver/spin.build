@@ -35,9 +35,12 @@ import java.lang.classfile.ClassFile;
 import java.lang.classfile.attribute.ModuleAttribute;
 import java.lang.constant.ClassDesc;
 import java.lang.constant.ModuleDesc;
+import java.lang.module.ModuleDescriptor;
 import java.lang.reflect.Field;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -47,6 +50,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
+import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
@@ -618,6 +622,172 @@ class AbstractJavaLinkerTest {
             cache, Set.of("java.base", "jdk.compiler"), candidatePaths, "the.root.module", jmodsDirB);
 
         assertThat(messages.stream().filter(m -> m.contains("depend on automatic modules"))).hasSize(2);
+    }
+
+    // --- stampModuleInfo / stampModuleVersion ---
+
+    private static byte[] moduleInfo(final String moduleName, final String version, final String... requires) {
+        return ClassFile.of().buildModule(
+            ModuleAttribute.of(
+                ModuleDesc.of(moduleName),
+                mb -> {
+                    if (version != null) {
+                        mb.moduleVersion(version);
+                    }
+                    mb.requires(ModuleDesc.of("java.base"), 0, null);
+                    for (final String req : requires) {
+                        mb.requires(ModuleDesc.of(req), 0, null);
+                    }
+                }));
+    }
+
+    private static Optional<String> rawVersion(final byte[] moduleInfo) {
+        return ModuleDescriptor.read(ByteBuffer.wrap(moduleInfo)).rawVersion();
+    }
+
+    private Path moduleJar(final String fileName, final Map<String, byte[]> entries) throws IOException {
+        final Path jar = this.tempDir.resolve(fileName);
+        try (var jos = new JarOutputStream(Files.newOutputStream(jar))) {
+            for (final var entry : entries.entrySet()) {
+                jos.putNextEntry(new JarEntry(entry.getKey()));
+                jos.write(entry.getValue());
+                jos.closeEntry();
+            }
+        }
+        return jar;
+    }
+
+    private static byte[] jarEntry(final Path jar, final String entryName) throws IOException {
+        try (var zf = new ZipFile(jar.toFile())) {
+            try (var is = zf.getInputStream(zf.getEntry(entryName))) {
+                return is.readAllBytes();
+            }
+        }
+    }
+
+    @Test
+    void stampModuleInfo_appendsBuildMetadataToSnapshotVersion() {
+        final var stamped = AbstractJavaLinker.stampModuleInfo(
+            moduleInfo("the.module", "0.6.1-SNAPSHOT"), "a1b2c3d-dirty");
+
+        assertThat(stamped).isPresent();
+        assertThat(rawVersion(stamped.get())).contains("0.6.1-SNAPSHOT+a1b2c3d-dirty");
+    }
+
+    @Test
+    void stampModuleInfo_preservesTheRestOfTheModuleDescriptor() {
+        final byte[] original = moduleInfo("the.module", "0.6.1-SNAPSHOT", "other.module");
+
+        final byte[] stamped = AbstractJavaLinker.stampModuleInfo(original, "a1b2c3d").orElseThrow();
+
+        final var before = ModuleDescriptor.read(ByteBuffer.wrap(original));
+        final var after = ModuleDescriptor.read(ByteBuffer.wrap(stamped));
+        assertThat(after.name()).isEqualTo(before.name());
+        assertThat(after.requires()).isEqualTo(before.requires());
+        assertThat(ClassFile.of().parse(stamped).majorVersion())
+            .isEqualTo(ClassFile.of().parse(original).majorVersion());
+    }
+
+    @Test
+    void stampModuleInfo_leavesAReleaseVersionAlone() {
+        assertThat(AbstractJavaLinker.stampModuleInfo(moduleInfo("the.module", "0.6.0"), "a1b2c3d")).isEmpty();
+    }
+
+    @Test
+    void stampModuleInfo_leavesAnUnversionedModuleAlone() {
+        assertThat(AbstractJavaLinker.stampModuleInfo(moduleInfo("the.module", null), "a1b2c3d")).isEmpty();
+    }
+
+    @Test
+    void stampModuleInfo_isIdempotent() {
+        final byte[] stamped = AbstractJavaLinker.stampModuleInfo(
+            moduleInfo("the.module", "0.6.1-SNAPSHOT"), "a1b2c3d").orElseThrow();
+
+        assertThat(AbstractJavaLinker.stampModuleInfo(stamped, "e4f5a6b")).isEmpty();
+    }
+
+    @Test
+    void stampModuleVersion_rewritesModuleInfoAndKeepsOtherEntries() throws Exception {
+        final Map<String, byte[]> entries = new LinkedHashMap<>();
+        entries.put("module-info.class", moduleInfo("the.module", "0.6.1-SNAPSHOT"));
+        entries.put("some/Class.class", new byte[] {0x42});
+        final Path jar = moduleJar("stamp.jar", entries);
+
+        assertThat(AbstractJavaLinker.stampModuleVersion(jar, "a1b2c3d")).isTrue();
+
+        assertThat(rawVersion(jarEntry(jar, "module-info.class"))).contains("0.6.1-SNAPSHOT+a1b2c3d");
+        assertThat(jarEntry(jar, "some/Class.class")).containsExactly(0x42);
+        assertThat(jarEntryNames(jar)).containsExactly("module-info.class", "some/Class.class");
+    }
+
+    @Test
+    void stampModuleVersion_preservesEntryTimestampsAndCompressionMethods() throws Exception {
+        final var timestamp = FileTime.fromMillis(1_700_000_000_000L);
+        final Path jar = this.tempDir.resolve("metadata.jar");
+        try (var zos = new ZipOutputStream(Files.newOutputStream(jar))) {
+            final var moduleInfo = moduleInfo("the.module", "0.6.1-SNAPSHOT");
+            final var info = new ZipEntry("module-info.class");
+            info.setMethod(ZipEntry.STORED);
+            info.setSize(moduleInfo.length);
+            info.setCompressedSize(moduleInfo.length);
+            final var crc = new CRC32();
+            crc.update(moduleInfo);
+            info.setCrc(crc.getValue());
+            info.setLastModifiedTime(timestamp);
+            zos.putNextEntry(info);
+            zos.write(moduleInfo);
+            zos.closeEntry();
+
+            final var other = new ZipEntry("some/Class.class");
+            other.setLastModifiedTime(timestamp);
+            zos.putNextEntry(other);
+            zos.write(new byte[] {0x42});
+            zos.closeEntry();
+        }
+
+        assertThat(AbstractJavaLinker.stampModuleVersion(jar, "a1b2c3d")).isTrue();
+
+        try (var zf = new ZipFile(jar.toFile())) {
+            assertThat(zf.getEntry("module-info.class").getMethod()).isEqualTo(ZipEntry.STORED);
+            assertThat(zf.getEntry("module-info.class").getLastModifiedTime()).isEqualTo(timestamp);
+            assertThat(zf.getEntry("some/Class.class").getMethod()).isEqualTo(ZipEntry.DEFLATED);
+            assertThat(zf.getEntry("some/Class.class").getLastModifiedTime()).isEqualTo(timestamp);
+        }
+        assertThat(rawVersion(jarEntry(jar, "module-info.class"))).contains("0.6.1-SNAPSHOT+a1b2c3d");
+    }
+
+    @Test
+    void stampModuleVersion_stampsMultiReleaseVariantsToo() throws IOException {
+        final Map<String, byte[]> entries = new LinkedHashMap<>();
+        entries.put("module-info.class", moduleInfo("the.module", "0.6.1-SNAPSHOT"));
+        entries.put("META-INF/versions/21/module-info.class", moduleInfo("the.module", "0.6.1-SNAPSHOT"));
+        final Path jar = moduleJar("multi-release.jar", entries);
+
+        assertThat(AbstractJavaLinker.stampModuleVersion(jar, "a1b2c3d")).isTrue();
+
+        assertThat(rawVersion(jarEntry(jar, "module-info.class"))).contains("0.6.1-SNAPSHOT+a1b2c3d");
+        assertThat(rawVersion(jarEntry(jar, "META-INF/versions/21/module-info.class")))
+            .contains("0.6.1-SNAPSHOT+a1b2c3d");
+    }
+
+    @Test
+    void stampModuleVersion_doesNotTouchAReleaseJar() throws IOException {
+        final Path jar = moduleJar("release.jar", Map.of("module-info.class", moduleInfo("the.module", "0.6.0")));
+        final byte[] before = Files.readAllBytes(jar);
+
+        assertThat(AbstractJavaLinker.stampModuleVersion(jar, "a1b2c3d")).isFalse();
+
+        assertThat(Files.readAllBytes(jar)).isEqualTo(before);
+    }
+
+    @Test
+    void stampModuleVersion_doesNotTouchANonModularJar() throws IOException {
+        final Path jar = automaticJar("plain.jar");
+        final byte[] before = Files.readAllBytes(jar);
+
+        assertThat(AbstractJavaLinker.stampModuleVersion(jar, "a1b2c3d")).isFalse();
+
+        assertThat(Files.readAllBytes(jar)).isEqualTo(before);
     }
 
     private static AbstractJavaLinker newLinker(final TelemetryRecorder recorder) throws Exception {
