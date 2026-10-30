@@ -78,7 +78,7 @@
         <junit.version>6.0.3</junit.version>
         <mockito.version>5.23.0</mockito.version>
         <percolate.version>0.2.4</percolate.version>
-        <spawn.version>0.4.3</spawn.version>
+        <spawn.version>0.4.4</spawn.version>
 
         <!-- Plugin Dependency Versions -->
         <maven-assembly-plugin.version>3.8.0</maven-assembly-plugin.version>
