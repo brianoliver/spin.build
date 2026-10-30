@@ -24,7 +24,7 @@ After a full build and install:
 
 ```
 ./mvnw clean install
-./install-dev.sh
+./install.sh --local
 ./test-fixtures.sh
 ```
 

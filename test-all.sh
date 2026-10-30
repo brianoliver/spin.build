@@ -23,7 +23,8 @@ fail() { echo "  [FAIL] $*"; echo "        log: $1"; exit 1; }
 
 run() {
     local label="$1"; shift
-    local log="$LOG_DIR/$(echo "$label" | tr ' /' '_').log"
+    local log
+    log="$LOG_DIR/$(echo "$label" | tr ' /' '_').log"
     echo -n "  $label ... "
     if "$@" >"$log" 2>&1; then
         echo "ok"
@@ -40,7 +41,7 @@ echo "spin full build test  $(date '+%Y-%m-%d %H:%M')"
 echo "──────────────────────────────────────────────"
 
 run "mvnw clean install"  bash -c "cd '$SCRIPT_DIR' && ./mvnw clean install"
-run "install-dev.sh"      bash -c "cd '$SCRIPT_DIR' && ./install-dev.sh"
+run "install.sh --local"  bash -c "cd '$SCRIPT_DIR' && ./install.sh --local"
 
 for project in "${PROJECTS[@]}"; do
     [[ "$project" = /* ]] || project="$SCRIPT_DIR/$project"

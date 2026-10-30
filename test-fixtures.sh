@@ -3,7 +3,7 @@
 #
 # Prerequisites:
 #   ./mvnw clean install
-#   ./install-dev.sh
+#   ./install.sh --local
 #
 # Usage:
 #   ./test-fixtures.sh [fixture-filter]

@@ -16,7 +16,6 @@ runs:
         case "${{ runner.os }}/${{ runner.arch }}" in
           Linux/X64)   echo "artifact=spin-linux-amd64"  >> "$GITHUB_OUTPUT" ;;
           Linux/ARM64) echo "artifact=spin-linux-arm64"  >> "$GITHUB_OUTPUT" ;;
-          macOS/X64)   echo "artifact=spin-macos-amd64"  >> "$GITHUB_OUTPUT" ;;
           macOS/ARM64) echo "artifact=spin-macos-arm64"  >> "$GITHUB_OUTPUT" ;;
           *) echo "Unsupported platform: ${{ runner.os }}/${{ runner.arch }}" >&2; exit 1 ;;
         esac
