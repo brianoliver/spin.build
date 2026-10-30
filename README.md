@@ -57,18 +57,23 @@ Bootstrap using the Maven wrapper (required before `spin` can build itself):
 ./mvnw clean install
 ```
 
-This produces a distributable zip at `spin/target/spin-<version>-bin.zip`. To install it locally and
-add `spin` to your PATH in one step:
+This produces the image for your own platform at `spin/.build/spin-<os>-<arch>`. To install it locally
+and link `spin` into `~/.local/bin`:
 
 ```bash
-./install-dev.sh
+./install.sh --local
 ```
 
-Or to rebuild and install in one go:
+## Installing a Release
 
 ```bash
-./install-dev.sh --build
+curl -fsSL https://raw.githubusercontent.com/Workday/spin.build/main/install.sh | sh
 ```
+
+installs the latest release; add `-s -- 0.3.0` after `sh` for a specific version. Every installed version is
+kept under `~/.spin/versions`, so switching back to one you've already used is a symlink flip, not a download.
+`./install.sh --list` shows which versions are cached and which one is active.
+`SPIN_HOME`, `SPIN_LINK_DIR` and `SPIN_REPO` override `~/.spin`, `~/.local/bin` and `Workday/spin.build`.
 
 ## Contributing
 

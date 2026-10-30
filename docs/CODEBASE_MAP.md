@@ -113,7 +113,7 @@ spin.build/
 ├── module-catalog.properties  module-name → Maven G:A:T:C:version-range (~90 entries)
 ├── version.properties         module-name glob → version
 ├── coding-conventions.md      Google Java Style + spin rules
-├── install-dev.sh             Extract host jlink image to ~/.spin, symlink `spin`
+├── install.sh                 curl-able installer: a release, or `--local` host image, into ~/.spin, symlink `spin`
 ├── test-all.sh / test-fixtures.sh   cross-repo and fixture smoke tests
 └── .github/workflows/         main-pull-request, publish-snapshot, release, release-jlink
 ```
@@ -556,10 +556,12 @@ Bootstrap chain in `spin/pom.xml`, both bound to **`prepare-package`**:
 
 Cross-target images are free: `spin clean jlink` emits one per distinct (OS, arch) among JDKs the
 `build.spawn` detector finds — stage foreign-platform JDKs under a host-scoped glob and they're
-picked up (`docs/CROSS_TARGET_JDKS.md`). `install-dev.sh` extracts the host image to
-`~/.spin/versions/dev/` and symlinks `~/.local/bin/spin`. `test-all.sh` = `mvnw clean install` +
-`install-dev.sh` + `spin -w <proj> clean build` across sibling repos. `test-fixtures.sh` runs each
-`fixtures/maven/*` through Maven (ground truth) then `spin clean build`.
+picked up (`docs/CROSS_TARGET_JDKS.md`). `install.sh --local` copies the host image to
+`~/.spin/versions/dev/` and symlinks `~/.local/bin/spin`; given a version (or none, for the latest) it
+downloads that release instead, and is what the README's `curl | sh` line runs. `--list` shows the
+cached versions. `test-all.sh` = `mvnw clean install` + `install.sh --local` + `spin -w <proj> clean
+build` across sibling repos. `test-fixtures.sh` runs each `fixtures/maven/*` through Maven (ground
+truth) then `spin clean build`.
 
 ### CI (`.github/workflows/`)
 
